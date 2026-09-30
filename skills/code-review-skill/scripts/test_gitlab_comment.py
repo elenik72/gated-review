@@ -80,8 +80,20 @@ class PostGateTest(unittest.TestCase):
         self.assertIn("--question", str(ctx.exception.code))
 
     def test_a_question_passes_without_the_gate(self):
-        q = "**[ai-review-bot]** · Вопрос\n\nПочему здесь не используется общий хук?"
+        q = "**[ai-review-bot]** · Вопрос · Блокирующее: нет\n\nПочему здесь не используется общий хук?"
         self.assertEqual(gitlab_comment.question_body(q), q)
+
+    def test_a_question_without_the_bot_header_is_refused(self):
+        for q in ("Почему здесь не используется общий хук?",
+                  "**[ai-review-bot]** · Приоритет: не важно · Блокирующее: нет\n\nПочему не общий хук?"):
+            with self.assertRaises(SystemExit):
+                gitlab_comment.question_body(q)
+
+    def test_a_reply_keeps_the_bot_tag(self):
+        ok = "**[ai-review-bot]** · Приоритет: важно · Блокирующее: да · подтверждено\n\nИсправлено в a1b2c3d."
+        self.assertEqual(gitlab_comment.bot_body(ok, "a reply"), ok)
+        with self.assertRaises(SystemExit):
+            gitlab_comment.bot_body("Исправлено, спасибо!", "a reply")
 
     def test_a_finding_cannot_hide_behind_question(self):
         with self.assertRaises(SystemExit):

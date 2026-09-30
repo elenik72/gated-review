@@ -188,9 +188,23 @@ def gated(review_dir: str, items: list[dict]) -> list[tuple]:
     return out
 
 
+BOT = "**[ai-review-bot]**"
+QUESTION_HEAD = BOT + " · Вопрос · Блокирующее: нет"
+
+
+def bot_body(body: str, what: str) -> str:
+    """Every comment the bot leaves starts with its tag — `threads` finds the re-review work by it."""
+    if not body.lstrip().startswith(BOT):
+        sys.exit(f"REFUSED: {what} must start with {BOT} — without it the thread drops out of "
+                 "`threads`, the re-review work list.")
+    return body
+
+
 def question_body(body: str) -> str:
-    """A question claims nothing: no verdict and none of a finding's sections."""
+    """A question claims nothing: its own header, no verdict, none of a finding's sections."""
     first = body.strip().splitlines()[0] if body.strip() else ""
+    if not first.startswith(QUESTION_HEAD):
+        sys.exit(f"REFUSED: a question starts with the line «{QUESTION_HEAD}».")
     if finding.CONFIRMED in first or finding.ASSUMED in first or "**Ломается при:**" in body:
         sys.exit("REFUSED: this is a finding, not a question — it carries a verdict or a failure "
                  "scenario. Pass it through finding.py and post it without --question.")
@@ -248,7 +262,7 @@ def cmd_threads(args):
 
 def cmd_reply(args):
     project, iid = parse_mr(args.mr)
-    body = args.body if args.body else open(args.body_file, encoding="utf-8").read()
+    body = bot_body(args.body if args.body else open(args.body_file, encoding="utf-8").read(), "a reply")
     note = api(
         args.host,
         f"projects/{project}/merge_requests/{iid}/discussions/{args.thread}/notes",

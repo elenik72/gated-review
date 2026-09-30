@@ -50,8 +50,10 @@ only if its body is exactly what `finding.py render` produced for a finding at t
 location (`.review/` in the current directory, or `--dir`). An edited body, a comment
 written by hand or a finding moved to another line is refused before the first request —
 the fix is `finding.py add`, then posting its output unchanged. A question to the author
-claims nothing and goes with `post --question`; one that carries a verdict or a failure
-scenario is refused as a disguised finding. `reply` and `resolve` are not gated.
+claims nothing and goes with `post --question`: its first line is exactly
+`**[ai-review-bot]** · Вопрос · Блокирующее: нет` (no verdict — it claims nothing); one that carries a
+verdict or a failure scenario is refused as a disguised finding. A `reply` must start with
+`**[ai-review-bot]**` too — `threads` finds the re-review work by that tag. `resolve` is not gated.
 
 ```bash
 S=<skill>/scripts/gitlab_comment.py   # <skill> — каталог SKILL.md (в Claude: ${CLAUDE_SKILL_DIR})

@@ -243,7 +243,9 @@ Read [reference/posting.md](reference/posting.md) before posting — it holds th
 commands. The part that must never slip:
 
 - **Inline, one comment per finding**, anchored to the changed line — never a page-level note.
-- **First line, exactly:** `**[ai-review-bot]** · Приоритет: <важно | желательно | не важно> · Блокирующее: <да | нет> · <подтверждено | предположение>`
+- **First line, exactly:** `**[ai-review-bot]** · Приоритет: <важно | желательно | не важно> · Блокирующее: <да | нет> · <подтверждено | предположение>`.
+  A question to the author: `**[ai-review-bot]** · Вопрос · Блокирующее: нет` (`post --question`). A reply
+  in a thread also starts with `**[ai-review-bot]**`. The script refuses anything else.
 - **Only through the scripts:** `finding.py render --json` → `gitlab_comment.py post-batch`. The
   posting script refuses any body that did not pass the gate; `glab api -f position[...]` silently
   creates page-level notes.
