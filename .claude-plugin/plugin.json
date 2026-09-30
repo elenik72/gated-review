@@ -1,0 +1,8 @@
+{
+  "name": "gated-review",
+  "version": "1.0.0",
+  "description": "Evidence-gated code review: business / design / security / full modes, TS-React, NestJS, Python-FastAPI; inline GitLab MR comments only for findings that survived a check",
+  "author": { "name": "Sergey Andreev" },
+  "license": "MIT",
+  "keywords": ["code-review", "gitlab", "typescript", "react", "nestjs", "python", "fastapi", "business-logic"]
+}

@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: business-missing-requirement
+tags: [quality, recall, business, ts]
+context:
+  scaffold_script: fixture.sh

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Gated Review"
+  short_description: "Evidence-gated MR review: business, design, security or full; TS/React, NestJS, Python/FastAPI"
+policy:
+  allow_implicit_invocation: true
