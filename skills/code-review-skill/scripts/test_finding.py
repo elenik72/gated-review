@@ -480,5 +480,44 @@ class ModesAndRequirementsTest(unittest.TestCase):
         self.assertEqual(self.cli("init", "--force", "--stack", "ruby")[0], 2)
 
 
+class ShapeTest(unittest.TestCase):
+    """A comment is read between the author's lines: one claim, short steps, the proof folded."""
+
+    def refused(self, **over):
+        with self.assertRaises(finding.Refused) as ctx:
+            finding.validate(args(**over))
+        return str(ctx.exception)
+
+    def test_a_paragraph_claim_is_refused(self):
+        msg = self.refused(claim="Описание закрывает задачу словом Closes, а её runtime-часть не сделана: "
+                                 "карточка по снимку Run и подпись события Failed в журнале; сама задача говорит, "
+                                 "что после раннего результата она не считается завершённой.")
+        self.assertIn("finding.py note", msg)
+
+    def test_more_than_three_steps_is_a_task_not_a_comment(self):
+        self.assertIn("задача", self.refused(fix=["шаг 1", "шаг 2", "шаг 3", "шаг 4"]))
+
+    def test_a_list_of_places_is_not_a_command(self):
+        self.refused(evidence="; ".join(["Block 6 «HTTP read model»", "TActivityEntityDto в api/dto.ts",
+                                         "activities.change_log.events в en.yml", "ChangeLog/Entry.tsx:30",
+                                         "merged_at MR vs resolutiondate задач"]))
+
+    def test_output_lines_must_fit_the_screen(self):
+        self.refused(output="Block 6: GET .../activities/{id} отдаёт " + "readOnly, players, " * 10)
+        self.refused(output="\n".join("line %d" % n for n in range(12)))
+
+    def test_steps_render_as_a_list_and_the_proof_is_folded(self):
+        body = finding.render_comment(finding.validate(args(fix=["заменить Closes на Relates to",
+                                                                 "закрыть задачу тем MR, что переключит API"])))
+        self.assertIn("**Что сделать:**\n- заменить Closes на Relates to\n- закрыть", body)
+        self.assertIn("<details><summary>Как проверено</summary>", body)
+        self.assertLess(body.index("Что сделать"), body.index("Как проверено"))
+
+    def test_an_old_state_with_a_single_fix_string_still_renders(self):
+        f = finding.validate(args())
+        f["fix"] = "один шаг строкой, как в старом state.json"
+        self.assertIn("**Что сделать:** один шаг строкой", finding.render_comment(f))
+
+
 if __name__ == '__main__':
     unittest.main()

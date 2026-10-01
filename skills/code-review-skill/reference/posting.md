@@ -20,11 +20,17 @@ When review findings are posted to a pull/merge request:
   **[ai-review-bot]** · Приоритет: <важно | желательно | не важно> · Блокирующее: <да | нет> · <подтверждено | предположение>
   ```
 
-  Then a blank line, then the explanation in plain words (see *Language and
-  Wording* above). Translate the labels to the reader's language if it isn't
-  Russian, but always keep the `**[ai-review-bot]**` tag and always state all
-  three: the priority, whether it blocks the merge, and the verdict from
-  *The Gate* — подтверждено or предположение.
+  Translate the labels to the reader's language if it isn't Russian, but always
+  keep the `**[ai-review-bot]**` tag and always state all three: the priority,
+  whether it blocks the merge, and the verdict from *The Gate* — подтверждено or
+  предположение.
+- **The body is built by `finding.py render`, in this order:** the claim in one
+  sentence → «Ломается при» with one scenario → «Что сделать» as up to three
+  steps (a list when there is more than one) → the sibling / rule / assumption
+  line → the command and its proving lines folded under
+  `<details><summary>Как проверено</summary>`. The reader sees the problem and the
+  fix first; the proof is one click away. Field lengths are capped at `add` —
+  see *Language and Wording* in SKILL.md for what goes into `note` instead.
 - **A подтверждено comment carries its evidence**: the command that was run and
   what it printed, or the exact `path/File.tsx:NN` of the sibling it is compared
   against. A предположение comment says in one sentence why the check could not

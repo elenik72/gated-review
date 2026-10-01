@@ -84,6 +84,12 @@ CLAIM_FORMS = {
     "rule": ("нарушает правило самого репо", False),
     "unrequested": ("поведение, которого не требует тикет", False),
 }
+# A comment is read in the diff, between the author's own lines: it has to be scannable.
+LIMITS = {"claim": 160, "breaks_when": 240, "evidence": 160, "assumption": 200}
+FIX_STEPS, FIX_WIDTH = 3, 160
+OUTPUT_LINES, OUTPUT_WIDTH = 10, 120
+ELSEWHERE = ("Контекст — что уже сделано, что делать не нужно, планы на другие MR и задачи — не в комментарий,\n"
+             "а в сводку ревью: finding.py note \"<текст>\".")
 RULE_RE = re.compile(r"^(?P<path>[^\s:]+):(?P<a>\d+)(?:-(?P<b>\d+))?$")
 REQ_STATUSES = {
     "met": ("✅", "выполнено"),
@@ -204,6 +210,40 @@ def compliance(reqs):
     return "полностью соответствует"
 
 
+def fix_steps(fix):
+    """--fix may be given several times; old states keep a single string."""
+    if not fix:
+        return []
+    return [fix] if isinstance(fix, str) else [f for f in fix if f and f.strip()]
+
+
+def check_shape(args):
+    """Length and shape of each field: one claim, one scenario, a few short steps, the lines that prove."""
+    why = {
+        "claim": "утверждение — одно предложение: что не так и где. Второе утверждение — вторая находка.",
+        "breaks_when": "один сценарий «вход / состояние -> что увидит пользователь». Второй — вторая находка.",
+        "evidence": "одна команда — та, что могла опровергнуть утверждение. Список мест, куда смотрел,\n"
+                    "командой не является: сосед — через --sibling, остальное — в note.",
+        "assumption": "одна причина, почему проверить не удалось.",
+    }
+    for field, limit in LIMITS.items():
+        value = (getattr(args, field, None) or "").strip()
+        if "\n" in value or len(value) > limit:
+            raise Refused("--%s: одна строка до %d знаков, сейчас %d.\n%s\n%s"
+                          % (field.replace("_", "-"), limit, len(value), why[field], ELSEWHERE))
+    if (getattr(args, "evidence", None) or "").count(";") >= 2:
+        raise Refused("--evidence: это перечисление, а не команда (несколько «;»).\n%s" % why["evidence"])
+    steps = fix_steps(getattr(args, "fix", None))
+    if len(steps) > FIX_STEPS or any("\n" in x.strip() or len(x.strip()) > FIX_WIDTH for x in steps):
+        raise Refused("--fix: до %d шагов (флаг повторяется), каждый — одна строка до %d знаков.\n"
+                      "Больше шагов — это задача, а не комментарий.\n%s" % (FIX_STEPS, FIX_WIDTH, ELSEWHERE))
+    lines = (getattr(args, "output", None) or "").strip().splitlines()
+    if len(lines) > OUTPUT_LINES or any(len(l) > OUTPUT_WIDTH for l in lines):
+        raise Refused("--output: только строки, которые доказывают утверждение — до %d строк по %d знаков.\n"
+                      "Длинная строка не переносится в GitLab и уезжает за край экрана."
+                      % (OUTPUT_LINES, OUTPUT_WIDTH))
+
+
 def validate(args):
     """Return a finding dict, or raise Refused with what is missing and why it matters."""
     if args.form not in CLAIM_FORMS:
@@ -227,6 +267,8 @@ def validate(args):
 
     if len(args.breaks_when.strip()) < 20:
         raise Refused("--breaks-when слишком короткий, чтобы что-то значить: %r" % args.breaks_when)
+
+    check_shape(args)
 
     if not LOCATION_RE.match(args.location or ""):
         raise Refused(
@@ -332,7 +374,7 @@ def validate(args):
         "rule": rule,
         "rule_quote": rule_quote,
         "assumption": args.assumption,
-        "fix": args.fix,
+        "fix": fix_steps(args.fix) or None,
         "verdict": verdict,
     }
 
@@ -350,16 +392,22 @@ def render_comment(f):
     breaks = f["breaks_when"].replace("->", "→")
     parts = [head, "", f["claim"], "", "**Ломается при:** %s" % breaks]
 
-    if f.get("evidence"):
-        parts += ["", "**Проверка:** `%s`" % f["evidence"], "", "```", f["output"] or "", "```"]
-    elif f.get("sibling"):
+    steps = fix_steps(f.get("fix"))
+    if len(steps) == 1:
+        parts += ["", "**Что сделать:** %s" % steps[0]]
+    elif steps:
+        parts += ["", "**Что сделать:**"] + ["- %s" % x for x in steps]
+
+    if f.get("sibling"):
         parts += ["", "**Сосед для сравнения:** `%s`" % f["sibling"]]
     elif f.get("rule"):
         parts += ["", "**Правило репо:** `%s` — «%s»" % (f["rule"], f["rule_quote"])]
     if f.get("assumption"):
         parts += ["", "**Почему это предположение:** %s" % f["assumption"]]
-    if f.get("fix"):
-        parts += ["", "**Что сделать:** %s" % f["fix"]]
+    if f.get("evidence"):
+        # the proof is one click away: the reader sees the problem and the fix first
+        parts += ["", "<details><summary>Как проверено</summary>", "", "`%s`" % f["evidence"],
+                  "", "```", f["output"] or "", "```", "", "</details>"]
     return "\n".join(parts)
 
 
@@ -743,7 +791,8 @@ def build_parser():
     q.add_argument("--sibling", help="path/Sibling.tsx:41 — for claims nothing executes")
     q.add_argument("--rule", help="AGENTS.md:12-14 — the repo rule a 'rule' finding violates")
     q.add_argument("--assumption", help="why the claim could not be checked -> предположение")
-    q.add_argument("--fix", help="what to do about it")
+    q.add_argument("--fix", action="append",
+                   help="one step of what to do; repeat for up to 3 steps, one line each")
     q.set_defaults(func=cmd_add)
 
     q = sub.add_parser("refute", help="record a hypothesis your own check killed")

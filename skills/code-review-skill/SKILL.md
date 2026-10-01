@@ -227,15 +227,46 @@ is in Russian, write the findings in Russian) and in **plain, everyday words**.
   - "stale state" → "устаревшее значение, оставшееся в состоянии компонента"
   - "race condition" → "состояние гонки — два действия выполняются одновременно и мешают друг другу"
   - "off-by-one" → "ошибка на единицу в границах (например, цикл заходит на один шаг дальше нужного)"
-- **Prefer detailed, understandable explanations over terse expert shorthand.**
-  For every finding spell out, in plain words: (1) что именно происходит,
-  (2) при каких точно условиях это срабатывает, (3) что из-за этого увидит
-  пользователь или почему это важно. Одно чуть более длинное, но понятное
-  предложение лучше короткого загадочного.
+- **Short and scannable, not short and cryptic.** The comment is read in the diff,
+  between the author's lines. Each field answers one question in plain words:
+  the claim — *what is wrong and where* (one sentence); «Ломается при» — *one
+  scenario*, input → what the user sees; «Что сделать» — *up to three steps*,
+  one line each. `finding.py add` refuses longer fields (claim 160, scenario
+  240, step 160 characters, proof 10×120) — a refusal means split or move.
 - **Keep severity, but name it in words**, not only symbols or English labels:
   "нужно исправить до мержа" / "стоит поправить" / "необязательно, на усмотрение".
 - **Do not water down real problems** to sound polite — plain language means
   clear, not vague. Say directly what breaks and why.
+
+**What never goes into a comment** — it goes into the review summary with
+`finding.py note "<text>"`: what is already done well, what does not need doing,
+plans for other MRs and tickets, the history of related tickets, a list of places
+you looked. Two problems are two findings, each on its own line. At most two
+ticket/MR references per comment.
+
+Too long (one finding carrying four):
+
+> Описание закрывает PAY-12 словом Closes, а её runtime-часть по Block 6 не сделана: карточка
+> по снимку Run и подпись события Failed (D-66). Сама PAY-12 говорит… **Что сделать:** заменить
+> Closes на Relates to. Остаток можно делать уже сейчас на devmock: 1) … 2) … Уже на месте: … ,
+> … , … . Отдельной истории запусков делать не нужно: … PAY-12 закрыть тем MR, который …
+
+Scannable — the same finding; the rest went to `note`, the two missing UI parts became
+two findings of their own:
+
+```text
+**[ai-review-bot]** · Приоритет: желательно · Блокирующее: нет · подтверждено
+
+`Closes PAY-12` закроет задачу при мерже, хотя её вторая часть — переключение на API — не сделана.
+
+**Ломается при:** мерж MR → GitLab закрывает PAY-12 → переключение на API остаётся без задачи.
+
+**Что сделать:**
+- заменить `Closes PAY-12` на `Relates to PAY-12`;
+- закрыть PAY-12 тем MR, который переключит экран на API.
+
+<details><summary>Как проверено</summary> … команда и 1–3 строки её вывода … </details>
+```
 
 ## Posting Review Comments
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 — 2026-10-01
+
+- Comments are scannable: `finding.py add` caps each field (claim 160, scenario 240, up to 3 fix steps of
+  160, proof 10×120 characters) and refuses an `--evidence` that is a list of places, not a command;
+  `--fix` repeats and renders as a list; the command and its output fold under «Как проверено».
+- SKILL.md no longer asks for long explanations; context (what is already done, what is not needed, plans
+  for other MRs) goes to `finding.py note`, not into a comment. Before/after example in SKILL.md.
+- Questions (`post --question`) and replies (`reply`) must carry the `[ai-review-bot]` tag.
+
 ## 1.0.0 — 2026-09-30
 
 - Packaged as a Claude Code plugin + marketplace (`.claude-plugin/`), readable by Codex; `agents/openai.yaml`.
