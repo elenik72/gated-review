@@ -550,6 +550,24 @@ def write_notes(root, state):
 # commands
 # ═══════════════════════════════════════════════════════════════
 
+def hide_from_git(root):
+    """Keep review state out of commits of the repo under review: local .git/info/exclude only."""
+    out = subprocess.run(["git", "-C", root, "rev-parse", "--git-path", "info/exclude"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        return
+    path = out.stdout.strip()
+    if not os.path.isabs(path):
+        path = os.path.join(root, path)
+    text = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+    missing = [p for p in ("/%s/" % STATE_DIR, "/%s" % NOTES_FILE) if p not in text.splitlines()]
+    if missing:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(("\n" if text and not text.endswith("\n") else "")
+                     + "".join("%s\n" % p for p in missing))
+
+
 def cmd_init(args):
     root = args.dir
     if os.path.exists(state_path(root)):
@@ -578,6 +596,7 @@ def cmd_init(args):
     state["stacks"], state["plan_text"] = stacks, text
     save_state(root, state)
     write_notes(root, state)
+    hide_from_git(root)
     print("создано: %s и %s\n" % (state_path(root), os.path.join(root, NOTES_FILE)))
     print(text)
     return 0

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0 — 2026-10-16
+
+- No GitLab host is baked in: `gitlab_comment.py` takes `--host`, else `GITLAB_HOST`, else the host of
+  `origin` of the repo under review, and refuses a `github.com` origin with a clear message.
+- `finding.py init` adds `/.review/` and `/REVIEW-NOTES.md` to the local `.git/info/exclude` of the repo
+  under review, so review state cannot be committed by accident.
+- Codex manifests: `.codex-plugin/plugin.json` and `.agents/plugins/marketplace.json`, next to the Claude
+  Code ones; manifests carry `homepage` and `repository`.
+- References inherited from awesome-skills/code-review-skill are fully in English (the Chinese parts are
+  translated); table-of-contents anchors follow the new headings.
+- README rewritten: what the author of an MR sees, how the gate works, install for Claude Code and Codex.
+- Fixed: the link from `reference/posting.md` to the posting script; the right edge of the error-hierarchy
+  diagram.
+
 ## 1.1.0 — 2026-10-01
 
 - Comments are scannable: `finding.py add` caps each field (claim 160, scenario 240, up to 3 fix steps of

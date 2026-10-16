@@ -10,8 +10,10 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 import finding
 import gitlab_comment
@@ -98,6 +100,51 @@ class PostGateTest(unittest.TestCase):
     def test_a_finding_cannot_hide_behind_question(self):
         with self.assertRaises(SystemExit):
             gitlab_comment.question_body(self.rendered()[0]["body"])
+
+
+class HostTest(unittest.TestCase):
+    """No host is baked in: it comes from --host, GITLAB_HOST or the reviewed repo's origin."""
+
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+        self.env = mock.patch.dict(os.environ)
+        self.env.start()
+        os.environ.pop("GITLAB_HOST", None)
+
+    def tearDown(self):
+        self.env.stop()
+        shutil.rmtree(self.repo, ignore_errors=True)
+
+    def origin(self, url):
+        subprocess.run(["git", "-C", self.repo, "remote", "add", "origin", url], check=True)
+
+    def test_origin_url_forms(self):
+        for url, host in [
+            ("git@gitlab.example.com:group/project.git", "gitlab.example.com"),
+            ("https://gitlab.example.com/group/project.git", "gitlab.example.com"),
+            ("ssh://git@gitlab.example.com:2222/group/project.git", "gitlab.example.com"),
+        ]:
+            subprocess.run(["git", "-C", self.repo, "remote", "remove", "origin"],
+                           capture_output=True)
+            self.origin(url)
+            self.assertEqual(gitlab_comment.resolve_host(None, self.repo), host, url)
+
+    def test_flag_beats_env_beats_origin(self):
+        self.origin("git@gitlab.example.com:group/project.git")
+        os.environ["GITLAB_HOST"] = "env.example.com"
+        self.assertEqual(gitlab_comment.resolve_host("flag.example.com", self.repo),
+                         "flag.example.com")
+        self.assertEqual(gitlab_comment.resolve_host(None, self.repo), "env.example.com")
+
+    def test_no_origin_and_no_flag_exits(self):
+        with self.assertRaises(SystemExit):
+            gitlab_comment.resolve_host(None, self.repo)
+
+    def test_github_origin_is_refused(self):
+        self.origin("git@github.com:owner/repo.git")
+        with self.assertRaises(SystemExit):
+            gitlab_comment.resolve_host(None, self.repo)
 
 
 if __name__ == "__main__":

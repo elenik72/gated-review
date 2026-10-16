@@ -1,27 +1,27 @@
 # React Code Review Guide
 
-React 审查重点：Hooks 规则、性能优化的适度性、组件设计、错误边界。
+React review focus: Rules of Hooks, moderation in performance optimization, component design, error boundaries.
 
-> RSC / React 19 Actions / Suspense streaming / TanStack Query 已拆分到
-> [React Modern Stack Guide](react-modern-stack.md) — 只在项目真的用到这些技术时才读它。
-> 平台无关的前端细节（全局样式冲突、列表 key、测试选择器、i18n、iframe sandbox）见
-> [Frontend Web Specifics](frontend-web-specifics.md)。
+> RSC / React 19 Actions / Suspense streaming / TanStack Query have been split out into
+> [React Modern Stack Guide](react-modern-stack.md) — read it only if the project actually uses these technologies.
+> Platform-agnostic frontend details (global style conflicts, list keys, test selectors, i18n, iframe sandbox) are covered in
+> [Frontend Web Specifics](frontend-web-specifics.md).
 
-## 目录
+## Contents
 
-- [基础 Hooks 规则](#基础-hooks-规则)
-- [useEffect 模式](#useeffect-模式)
+- [Basic Rules of Hooks](#basic-rules-of-hooks)
+- [useEffect Patterns](#useeffect-patterns)
 - [useMemo / useCallback](#usememo--usecallback)
-- [组件设计](#组件设计)
+- [Component Design](#component-design)
 - [Error Boundaries & Suspense](#error-boundaries--suspense)
 - [Review Checklists](#review-checklists)
 
 ---
 
-## 基础 Hooks 规则
+## Basic Rules of Hooks
 
 ```tsx
-// ❌ 条件调用 Hooks — 违反 Hooks 规则
+// ❌ Calling Hooks conditionally — violates the Rules of Hooks
 function BadComponent({ isLoggedIn }) {
   if (isLoggedIn) {
     const [user, setUser] = useState(null);  // Error!
@@ -29,7 +29,7 @@ function BadComponent({ isLoggedIn }) {
   return <div>...</div>;
 }
 
-// ✅ Hooks 必须在组件顶层调用
+// ✅ Hooks must be called at the top level of the component
 function GoodComponent({ isLoggedIn }) {
   const [user, setUser] = useState(null);
   if (!isLoggedIn) return <LoginPrompt />;
@@ -39,18 +39,18 @@ function GoodComponent({ isLoggedIn }) {
 
 ---
 
-## useEffect 模式
+## useEffect Patterns
 
 ```tsx
-// ❌ 依赖数组缺失或不完整
+// ❌ Missing or incomplete dependency array
 function BadEffect({ userId }) {
   const [user, setUser] = useState(null);
   useEffect(() => {
     fetchUser(userId).then(setUser);
-  }, []);  // 缺少 userId 依赖！
+  }, []);  // Missing userId dependency!
 }
 
-// ✅ 完整的依赖数组
+// ✅ Complete dependency array
 function GoodEffect({ userId }) {
   const [user, setUser] = useState(null);
   useEffect(() => {
@@ -58,20 +58,20 @@ function GoodEffect({ userId }) {
     fetchUser(userId).then(data => {
       if (!cancelled) setUser(data);
     });
-    return () => { cancelled = true; };  // 清理函数
+    return () => { cancelled = true; };  // Cleanup function
   }, [userId]);
 }
 
-// ❌ useEffect 用于派生状态（反模式）
+// ❌ useEffect used for derived state (anti-pattern)
 function BadDerived({ items }) {
   const [filteredItems, setFilteredItems] = useState([]);
   useEffect(() => {
     setFilteredItems(items.filter(i => i.active));
-  }, [items]);  // 不必要的 effect + 额外渲染
+  }, [items]);  // Unnecessary effect + extra render
   return <List items={filteredItems} />;
 }
 
-// ✅ 直接在渲染时计算，或用 useMemo
+// ✅ Compute directly during render, or use useMemo
 function GoodDerived({ items }) {
   const filteredItems = useMemo(
     () => items.filter(i => i.active),
@@ -80,17 +80,17 @@ function GoodDerived({ items }) {
   return <List items={filteredItems} />;
 }
 
-// ❌ useEffect 用于事件响应
+// ❌ useEffect used to respond to events
 function BadEventEffect() {
   const [query, setQuery] = useState('');
   useEffect(() => {
     if (query) {
-      analytics.track('search', { query });  // 应该在事件处理器中
+      analytics.track('search', { query });  // Should be in an event handler
     }
   }, [query]);
 }
 
-// ✅ 在事件处理器中执行副作用
+// ✅ Run side effects in event handlers
 function GoodEvent() {
   const [query, setQuery] = useState('');
   const handleSearch = (q: string) => {
@@ -105,29 +105,29 @@ function GoodEvent() {
 ## useMemo / useCallback
 
 ```tsx
-// ❌ 过度优化 — 常量不需要 useMemo
+// ❌ Over-optimization — constants don't need useMemo
 function OverOptimized() {
-  const config = useMemo(() => ({ timeout: 5000 }), []);  // 无意义
+  const config = useMemo(() => ({ timeout: 5000 }), []);  // Pointless
   const handleClick = useCallback(() => {
     console.log('clicked');
-  }, []);  // 如果不传给 memo 组件，无意义
+  }, []);  // Pointless unless passed to a memo component
 }
 
-// ✅ 只在需要时优化
+// ✅ Optimize only when needed
 function ProperlyOptimized() {
-  const config = { timeout: 5000 };  // 简单对象直接定义
+  const config = { timeout: 5000 };  // Define simple objects directly
   const handleClick = () => console.log('clicked');
 }
 
-// ❌ useCallback 依赖总是变化
+// ❌ useCallback with always-changing dependencies
 function BadCallback({ data }) {
-  // data 每次渲染都是新对象，useCallback 无效
+  // data is a new object on every render, so useCallback has no effect
   const process = useCallback(() => {
     return data.map(transform);
   }, [data]);
 }
 
-// ✅ useMemo + useCallback 配合 React.memo 使用
+// ✅ useMemo + useCallback used together with React.memo
 const MemoizedChild = React.memo(function Child({ onClick, items }) {
   return <div onClick={onClick}>{items.length}</div>;
 });
@@ -143,18 +143,18 @@ function Parent({ rawItems }) {
 
 ---
 
-## 组件设计
+## Component Design
 
 ```tsx
-// ❌ 在组件内定义组件 — 每次渲染都创建新组件
+// ❌ Defining a component inside a component — creates a new component on every render
 function BadParent() {
-  function ChildComponent() {  // 每次渲染都是新函数！
+  function ChildComponent() {  // A new function on every render!
     return <div>child</div>;
   }
   return <ChildComponent />;
 }
 
-// ✅ 组件定义在外部
+// ✅ Define the component outside
 function ChildComponent() {
   return <div>child</div>;
 }
@@ -162,17 +162,17 @@ function GoodParent() {
   return <ChildComponent />;
 }
 
-// ❌ Props 总是新对象引用
+// ❌ Props are always new object references
 function BadProps() {
   return (
     <MemoizedComponent
-      style={{ color: 'red' }}  // 每次渲染新对象
-      onClick={() => {}}         // 每次渲染新函数
+      style={{ color: 'red' }}  // New object on every render
+      onClick={() => {}}         // New function on every render
     />
   );
 }
 
-// ✅ 稳定的引用
+// ✅ Stable references
 const style = { color: 'red' };
 function GoodProps() {
   const handleClick = useCallback(() => {}, []);
@@ -185,16 +185,16 @@ function GoodProps() {
 ## Error Boundaries & Suspense
 
 ```tsx
-// ❌ 没有错误边界
+// ❌ No error boundary
 function BadApp() {
   return (
     <Suspense fallback={<Loading />}>
-      <DataComponent />  {/* 错误会导致整个应用崩溃 */}
+      <DataComponent />  {/* An error crashes the entire app */}
     </Suspense>
   );
 }
 
-// ✅ Error Boundary 包裹 Suspense
+// ✅ Error Boundary wraps Suspense
 function GoodApp() {
   return (
     <ErrorBoundary fallback={<ErrorUI />}>
@@ -210,46 +210,46 @@ function GoodApp() {
 
 ## Review Checklists
 
-### Hooks 规则
+### Rules of Hooks
 
-- [ ] Hooks 在组件/自定义 Hook 顶层调用
-- [ ] 没有条件/循环中调用 Hooks
-- [ ] useEffect 依赖数组完整
-- [ ] useEffect 有清理函数（订阅/定时器/请求）
-- [ ] 没有用 useEffect 计算派生状态
+- [ ] Hooks are called at the top level of components/custom Hooks
+- [ ] No Hooks called inside conditions/loops
+- [ ] useEffect dependency arrays are complete
+- [ ] useEffect has a cleanup function (subscriptions/timers/requests)
+- [ ] useEffect is not used to compute derived state
 
-### 性能优化（适度原则）
+### Performance Optimization (Moderation Principle)
 
-- [ ] useMemo/useCallback 只用于真正需要的场景
-- [ ] React.memo 配合稳定的 props 引用
-- [ ] 没有在组件内定义子组件
-- [ ] 没有在 JSX 中创建新对象/函数（除非传给非 memo 组件）
-- [ ] 长列表使用虚拟化（react-window/react-virtual）
+- [ ] Use useMemo/useCallback only where truly needed
+- [ ] Use React.memo with stable props references
+- [ ] No child components defined inside components
+- [ ] No new objects/functions created in JSX (unless passed to non-memo components)
+- [ ] Long lists use virtualization (react-window/react-virtual)
 
-### 组件设计
+### Component Design
 
-- [ ] 组件职责单一，不超过 200 行
-- [ ] 逻辑与展示分离（Custom Hooks）
-- [ ] Props 接口清晰，使用 TypeScript
-- [ ] 避免 Props Drilling（考虑 Context 或组合）
+- [ ] Each component has a single responsibility and is at most 200 lines
+- [ ] Logic is separated from presentation (Custom Hooks)
+- [ ] Props interface is clear and typed with TypeScript
+- [ ] Avoid Props Drilling (consider Context or composition)
 
-### 状态管理
+### State Management
 
-- [ ] 状态就近原则（最小必要范围）
-- [ ] 复杂状态用 useReducer
-- [ ] 全局状态用 Context 或状态库
-- [ ] 避免不必要的状态（派生 > 存储）
+- [ ] Keep state close to where it is used (smallest necessary scope)
+- [ ] Use useReducer for complex state
+- [ ] Use Context or a state library for global state
+- [ ] Avoid unnecessary state (derive > store)
 
-### 错误处理
+### Error Handling
 
-- [ ] 关键区域有 Error Boundary
-- [ ] Suspense 配合 Error Boundary 使用
-- [ ] 异步操作有错误处理
+- [ ] Critical areas have an Error Boundary
+- [ ] Use Suspense together with an Error Boundary
+- [ ] Async operations have error handling
 
-### 测试
+### Testing
 
-- [ ] 使用 @testing-library/react
-- [ ] 用 screen 查询元素
-- [ ] 用 userEvent 代替 fireEvent
-- [ ] 优先使用 *ByRole 查询
-- [ ] 测试行为而非实现细节
+- [ ] Use @testing-library/react
+- [ ] Query elements with screen
+- [ ] Use userEvent instead of fireEvent
+- [ ] Prefer *ByRole queries
+- [ ] Test behavior, not implementation details

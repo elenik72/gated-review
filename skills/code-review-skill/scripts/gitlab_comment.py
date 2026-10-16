@@ -37,6 +37,8 @@ exactly what `finding.py render` produces for a finding at that location in `.re
 (`--dir`, default `.`). Anything else is refused before the first request, so the gate
 cannot be skipped by writing a comment by hand. `reply` / `resolve` stay free.
 
+Host: `--host`, else GITLAB_HOST, else the host of the `origin` remote of the repo
+under review (`--dir`).
 Auth: reuses the `glab` CLI token (`glab config get token --host <host>`), or
 GITLAB_TOKEN / GL_TOKEN.
 """
@@ -55,7 +57,30 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import finding  # noqa: E402  — the gate: only what passed it is posted
 
-DEFAULT_HOST = os.environ.get("GITLAB_HOST", "gitlab.task4work.info")
+def remote_host(repo_dir: str) -> str | None:
+    """Host of the `origin` remote of the repo under review, or None."""
+    out = subprocess.run(
+        ["git", "-C", repo_dir, "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+    )
+    url = out.stdout.strip()
+    if "://" in url:  # https://host/group/project.git, ssh://git@host:2222/...
+        return urllib.parse.urlsplit(url).hostname
+    if ":" in url:  # scp-like: git@host:group/project.git
+        return url.split(":", 1)[0].rsplit("@", 1)[-1]
+    return None
+
+
+def resolve_host(flag: str | None, repo_dir: str) -> str:
+    host = flag or os.environ.get("GITLAB_HOST") or remote_host(repo_dir)
+    if not host:
+        sys.exit("GitLab host unknown: pass --host, set GITLAB_HOST, "
+                 "or run inside the repo under review")
+    if host == "github.com":
+        sys.exit("origin is on github.com: gitlab_comment.py posts to GitLab only, "
+                 "pass --host <gitlab host>")
+    return host
 
 
 def token(host: str) -> str:
@@ -295,7 +320,7 @@ def cmd_delete(args):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--host", default=DEFAULT_HOST)
+    p.add_argument("--host", help="GitLab host (default: GITLAB_HOST, else the host of origin in --dir)")
     p.add_argument("--dir", default=".", help="where finding.py keeps .review/ (default: .)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -339,6 +364,7 @@ def main():
     sp.set_defaults(func=cmd_delete)
 
     args = p.parse_args()
+    args.host = resolve_host(args.host, args.dir)
     args.func(args)
 
 

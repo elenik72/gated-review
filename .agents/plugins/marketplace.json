@@ -1,0 +1,21 @@
+{
+  "name": "review-tools",
+  "interface": {
+    "displayName": "Review Tools"
+  },
+  "plugins": [
+    {
+      "name": "gated-review",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/elenik72/gated-review.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

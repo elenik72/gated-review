@@ -1,31 +1,31 @@
 # TypeScript/JavaScript Code Review Guide
 
-> TypeScript 代码审查指南，覆盖类型系统、泛型、条件类型、strict 模式、async/await 模式等核心主题。
+> TypeScript code review guide covering core topics such as the type system, generics, conditional types, strict mode and async/await patterns.
 
-## 目录
+## Contents
 
-- [类型安全基础](#类型安全基础)
-- [泛型模式](#泛型模式)
-- [高级类型](#高级类型)
-- [Strict 模式配置](#strict-模式配置)
-- [异步处理](#异步处理)
-- [不可变性](#不可变性)
-- [ESLint 规则](#eslint-规则)
-- [测试](#测试)
-- [模块解析](#模块解析)
-- [TS 4.9+ / 5.x 新特性](#ts-49--5x-新特性)
+- [Type Safety Basics](#type-safety-basics)
+- [Generic Patterns](#generic-patterns)
+- [Advanced Types](#advanced-types)
+- [Strict Mode Configuration](#strict-mode-configuration)
+- [Async Handling](#async-handling)
+- [Immutability](#immutability)
+- [ESLint Rules](#eslint-rules)
+- [Testing](#testing)
+- [Module Resolution](#module-resolution)
+- [TS 4.9+ / 5.x New Features](#ts-49--5x-new-features)
 - [Review Checklist](#review-checklist)
 
 ---
 
-## 类型安全基础
+## Type Safety Basics
 
-### 避免使用 any
+### Avoid Using any
 
 ```typescript
 // ❌ Using any defeats type safety
 function processData(data: any) {
-  return data.value;  // 无类型检查，运行时可能崩溃
+  return data.value;  // No type checking, may crash at runtime
 }
 
 // ✅ Use proper types
@@ -36,7 +36,7 @@ function processData(data: DataPayload) {
   return data.value;
 }
 
-// ✅ 未知类型用 unknown + 类型守卫
+// ✅ Use unknown + type guards for unknown types
 function processUnknown(data: unknown) {
   if (typeof data === 'object' && data !== null && 'value' in data) {
     return (data as { value: string }).value;
@@ -45,15 +45,15 @@ function processUnknown(data: unknown) {
 }
 ```
 
-### 类型收窄
+### Type Narrowing
 
 ```typescript
-// ❌ 不安全的类型断言
+// ❌ Unsafe type assertion
 function getLength(value: string | string[]) {
-  return (value as string[]).length;  // 如果是 string 会出错
+  return (value as string[]).length;  // Breaks if value is a string
 }
 
-// ✅ 使用类型守卫
+// ✅ Use a type guard
 function getLength(value: string | string[]): number {
   if (Array.isArray(value)) {
     return value.length;
@@ -61,7 +61,7 @@ function getLength(value: string | string[]): number {
   return value.length;
 }
 
-// ✅ 使用 in 操作符
+// ✅ Use the in operator
 interface Dog { bark(): void }
 interface Cat { meow(): void }
 
@@ -74,34 +74,34 @@ function speak(animal: Dog | Cat) {
 }
 ```
 
-### 字面量类型与 as const
+### Literal Types and as const
 
 ```typescript
-// ❌ 类型过于宽泛
+// ❌ Type is too broad
 const config = {
   endpoint: '/api',
-  method: 'GET'  // 类型是 string
+  method: 'GET'  // Type is string
 };
 
-// ✅ 使用 as const 获得字面量类型
+// ✅ Use as const to get literal types
 const config = {
   endpoint: '/api',
   method: 'GET'
-} as const;  // method 类型是 'GET'
+} as const;  // method has type 'GET'
 
-// ✅ 用于函数参数
+// ✅ Use with function parameters
 function request(method: 'GET' | 'POST', url: string) { ... }
-request(config.method, config.endpoint);  // 正确！
+request(config.method, config.endpoint);  // Correct!
 ```
 
 ---
 
-## 泛型模式
+## Generic Patterns
 
-### 基础泛型
+### Basic Generics
 
 ```typescript
-// ❌ 重复代码
+// ❌ Duplicated code
 function getFirstString(arr: string[]): string | undefined {
   return arr[0];
 }
@@ -109,60 +109,60 @@ function getFirstNumber(arr: number[]): number | undefined {
   return arr[0];
 }
 
-// ✅ 使用泛型
+// ✅ Use generics
 function getFirst<T>(arr: T[]): T | undefined {
   return arr[0];
 }
 ```
 
-### 泛型约束
+### Generic Constraints
 
 ```typescript
-// ❌ 泛型没有约束，无法访问属性
+// ❌ Unconstrained generic, cannot access properties
 function getProperty<T>(obj: T, key: string) {
-  return obj[key];  // Error: 无法索引
+  return obj[key];  // Error: cannot be indexed
 }
 
-// ✅ 使用 keyof 约束
+// ✅ Constrain with keyof
 function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
   return obj[key];
 }
 
 const user = { name: 'Alice', age: 30 };
-getProperty(user, 'name');  // 返回类型是 string
-getProperty(user, 'age');   // 返回类型是 number
-getProperty(user, 'foo');   // Error: 'foo' 不在 keyof User
+getProperty(user, 'name');  // Return type is string
+getProperty(user, 'age');   // Return type is number
+getProperty(user, 'foo');   // Error: 'foo' is not in keyof User
 ```
 
-### 泛型默认值
+### Generic Defaults
 
 ```typescript
-// ✅ 提供合理的默认类型
+// ✅ Provide a sensible default type
 interface ApiResponse<T = unknown> {
   data: T;
   status: number;
   message: string;
 }
 
-// 可以不指定泛型参数
+// The generic parameter can be omitted
 const response: ApiResponse = { data: null, status: 200, message: 'OK' };
-// 也可以指定
+// Or specified explicitly
 const userResponse: ApiResponse<User> = { ... };
 ```
 
-### 常见泛型工具类型
+### Common Generic Utility Types
 
 ```typescript
-// ✅ 善用内置工具类型
+// ✅ Make good use of built-in utility types
 interface User {
   id: number;
   name: string;
   email: string;
 }
 
-type PartialUser = Partial<User>;         // 所有属性可选
-type RequiredUser = Required<User>;       // 所有属性必需
-type ReadonlyUser = Readonly<User>;       // 所有属性只读
+type PartialUser = Partial<User>;         // All properties optional
+type RequiredUser = Required<User>;       // All properties required
+type ReadonlyUser = Readonly<User>;       // All properties readonly
 type UserKeys = keyof User;               // 'id' | 'name' | 'email'
 type NameOnly = Pick<User, 'name'>;       // { name: string }
 type WithoutId = Omit<User, 'id'>;        // { name: string; email: string }
@@ -171,30 +171,30 @@ type UserRecord = Record<string, User>;   // { [key: string]: User }
 
 ---
 
-## 高级类型
+## Advanced Types
 
-### 条件类型
+### Conditional Types
 
 ```typescript
-// ✅ 根据输入类型返回不同类型
+// ✅ Return different types depending on the input type
 type IsString<T> = T extends string ? true : false;
 
 type A = IsString<string>;  // true
 type B = IsString<number>;  // false
 
-// ✅ 提取数组元素类型
+// ✅ Extract the array element type
 type ElementType<T> = T extends (infer U)[] ? U : never;
 
 type Elem = ElementType<string[]>;  // string
 
-// ✅ 提取函数返回类型（内置 ReturnType）
+// ✅ Extract a function's return type (built-in ReturnType)
 type MyReturnType<T> = T extends (...args: any[]) => infer R ? R : never;
 ```
 
-### 映射类型
+### Mapped Types
 
 ```typescript
-// ✅ 转换对象类型的所有属性
+// ✅ Transform all properties of an object type
 type Nullable<T> = {
   [K in keyof T]: T[K] | null;
 };
@@ -207,7 +207,7 @@ interface User {
 type NullableUser = Nullable<User>;
 // { name: string | null; age: number | null }
 
-// ✅ 添加前缀
+// ✅ Add a prefix
 type Getters<T> = {
   [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K];
 };
@@ -216,15 +216,15 @@ type UserGetters = Getters<User>;
 // { getName: () => string; getAge: () => number }
 ```
 
-### 模板字面量类型
+### Template Literal Types
 
 ```typescript
-// ✅ 类型安全的事件名称
+// ✅ Type-safe event names
 type EventName = 'click' | 'focus' | 'blur';
 type HandlerName = `on${Capitalize<EventName>}`;
 // 'onClick' | 'onFocus' | 'onBlur'
 
-// ✅ API 路由类型
+// ✅ API route types
 type ApiRoute = `/api/${string}`;
 const route: ApiRoute = '/api/users';  // OK
 const badRoute: ApiRoute = '/users';   // Error
@@ -233,20 +233,20 @@ const badRoute: ApiRoute = '/users';   // Error
 ### Discriminated Unions
 
 ```typescript
-// ✅ 使用判别属性实现类型安全
+// ✅ Use a discriminant property for type safety
 type Result<T, E> =
   | { success: true; data: T }
   | { success: false; error: E };
 
 function handleResult(result: Result<User, Error>) {
   if (result.success) {
-    console.log(result.data.name);  // TypeScript 知道 data 存在
+    console.log(result.data.name);  // TypeScript knows data exists
   } else {
-    console.log(result.error.message);  // TypeScript 知道 error 存在
+    console.log(result.error.message);  // TypeScript knows error exists
   }
 }
 
-// ✅ Redux Action 模式
+// ✅ Redux Action pattern
 type Action =
   | { type: 'INCREMENT'; payload: number }
   | { type: 'DECREMENT'; payload: number }
@@ -255,25 +255,25 @@ type Action =
 function reducer(state: number, action: Action): number {
   switch (action.type) {
     case 'INCREMENT':
-      return state + action.payload;  // payload 类型已知
+      return state + action.payload;  // payload type is known
     case 'DECREMENT':
       return state - action.payload;
     case 'RESET':
-      return 0;  // 这里没有 payload
+      return 0;  // No payload here
   }
 }
 ```
 
 ---
 
-## Strict 模式配置
+## Strict Mode Configuration
 
-### 推荐的 tsconfig.json
+### Recommended tsconfig.json
 
 ```json
 {
   "compilerOptions": {
-    // ✅ 必须开启的 strict 选项
+    // ✅ strict options that must be enabled
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -283,7 +283,7 @@ function reducer(state: number, action: Action): number {
     "noImplicitThis": true,
     "useUnknownInCatchVariables": true,
 
-    // ✅ 额外推荐选项
+    // ✅ Additional recommended options
     "noUncheckedIndexedAccess": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
@@ -293,37 +293,37 @@ function reducer(state: number, action: Action): number {
 }
 ```
 
-### noUncheckedIndexedAccess 的影响
+### Impact of noUncheckedIndexedAccess
 
 ```typescript
 // tsconfig: "noUncheckedIndexedAccess": true
 
 const arr = [1, 2, 3];
-const first = arr[0];  // 类型是 number | undefined
+const first = arr[0];  // Type is number | undefined
 
-// ❌ 直接使用可能出错
-console.log(first.toFixed(2));  // Error: 可能是 undefined
+// ❌ Using it directly may cause an error
+console.log(first.toFixed(2));  // Error: possibly undefined
 
-// ✅ 先检查
+// ✅ Check first
 if (first !== undefined) {
   console.log(first.toFixed(2));
 }
 
-// ✅ 或使用非空断言（确定时）
+// ✅ Or use a non-null assertion (when sure)
 console.log(arr[0]!.toFixed(2));
 ```
 
 ---
 
-## 异步处理
+## Async Handling
 
-### Promise 错误处理
+### Promise Error Handling
 
 ```typescript
 // ❌ Not handling async errors
 async function fetchUser(id: string) {
   const response = await fetch(`/api/users/${id}`);
-  return response.json();  // 网络错误未处理
+  return response.json();  // Network errors not handled
 }
 
 // ✅ Handle errors properly
@@ -346,13 +346,13 @@ async function fetchUser(id: string): Promise<User> {
 ### Promise.all vs Promise.allSettled
 
 ```typescript
-// ❌ Promise.all 一个失败全部失败
+// ❌ Promise.all: one failure fails everything
 async function fetchAllUsers(ids: string[]) {
   const users = await Promise.all(ids.map(fetchUser));
-  return users;  // 一个失败就全部失败
+  return users;  // One failure fails everything
 }
 
-// ✅ Promise.allSettled 获取所有结果
+// ✅ Promise.allSettled gets all results
 async function fetchAllUsers(ids: string[]) {
   const results = await Promise.allSettled(ids.map(fetchUser));
 
@@ -371,10 +371,10 @@ async function fetchAllUsers(ids: string[]) {
 }
 ```
 
-### 竞态条件处理
+### Handling Race Conditions
 
 ```typescript
-// ❌ 竞态条件：旧请求可能覆盖新请求
+// ❌ Race condition: an old request may overwrite a newer one
 function useSearch() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -382,11 +382,11 @@ function useSearch() {
   useEffect(() => {
     fetch(`/api/search?q=${query}`)
       .then(r => r.json())
-      .then(setResults);  // 旧请求可能后返回！
+      .then(setResults);  // The old request may return after the new one!
   }, [query]);
 }
 
-// ✅ 使用 AbortController
+// ✅ Use AbortController
 function useSearch() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -408,81 +408,81 @@ function useSearch() {
 
 ---
 
-## 不可变性
+## Immutability
 
-### Readonly 与 ReadonlyArray
+### Readonly and ReadonlyArray
 
 ```typescript
-// ❌ 可变参数可能被意外修改
+// ❌ A mutable parameter may be modified unintentionally
 function processUsers(users: User[]) {
-  users.sort((a, b) => a.name.localeCompare(b.name));  // 修改了原数组！
+  users.sort((a, b) => a.name.localeCompare(b.name));  // Mutates the original array!
   return users;
 }
 
-// ✅ 使用 readonly 防止修改
+// ✅ Use readonly to prevent modification
 function processUsers(users: readonly User[]): User[] {
   return [...users].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// ✅ 深度只读
+// ✅ Deep readonly
 type DeepReadonly<T> = {
   readonly [K in keyof T]: T[K] extends object ? DeepReadonly<T[K]> : T[K];
 };
 ```
 
-### 不变式函数参数
+### Immutable Function Parameters
 
 ```typescript
-// ✅ 使用 as const 和 readonly 保护数据
+// ✅ Protect data with as const and readonly
 function createConfig<T extends readonly string[]>(routes: T) {
   return routes;
 }
 
 const routes = createConfig(['home', 'about', 'contact'] as const);
-// 类型是 readonly ['home', 'about', 'contact']
+// Type is readonly ['home', 'about', 'contact']
 ```
 
 ---
 
-## ESLint 规则
+## ESLint Rules
 
-### 推荐的 @typescript-eslint 规则
+### Recommended @typescript-eslint Rules
 
 ```javascript
-// eslint.config.js（flat config，typescript-eslint v8）
+// eslint.config.js (flat config, typescript-eslint v8)
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
-// typescript-eslint ≥ 8.42：tseslint.config() 已弃用，改用 eslint/config 的 defineConfig
-// TypeScript 7（原生版）暂无 API：带类型信息的规则需要并存 TS 6（"typescript": "npm:@typescript/typescript6@^6"）
+// typescript-eslint ≥ 8.42: tseslint.config() is deprecated, use defineConfig from eslint/config instead
+// TypeScript 7 (native version) has no API yet: type-aware rules need TS 6 installed alongside it ("typescript": "npm:@typescript/typescript6@^6")
 export default tseslint.config(
   eslint.configs.recommended,
-  // 需要类型信息的规则集，对应旧的 recommended-requiring-type-checking
+  // Rule sets that require type information, equivalent to the old recommended-requiring-type-checking
   tseslint.configs.recommendedTypeChecked,
   tseslint.configs.strictTypeChecked,
   {
     languageOptions: {
       parserOptions: {
-        // 让带类型的规则自动找到对应 tsconfig
+        // Let type-aware rules find the matching tsconfig automatically
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },
     rules: {
-      // ✅ 类型安全
+      // ✅ Type safety
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unsafe-assignment': 'error',
       '@typescript-eslint/no-unsafe-member-access': 'error',
       '@typescript-eslint/no-unsafe-call': 'error',
       '@typescript-eslint/no-unsafe-return': 'error',
 
-      // ✅ 最佳实践
+      // ✅ Best practices
       '@typescript-eslint/explicit-function-return-type': 'warn',
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/await-thenable': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
 
-      // ✅ 代码风格
+      // ✅ Code style
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/prefer-nullish-coalescing': 'error',
       '@typescript-eslint/prefer-optional-chain': 'error',
@@ -491,31 +491,31 @@ export default tseslint.config(
 );
 ```
 
-### 常见 ESLint 错误修复
+### Fixing Common ESLint Errors
 
 ```typescript
-// ❌ no-floating-promises: Promise 必须被处理
+// ❌ no-floating-promises: Promises must be handled
 async function save() { ... }
-save();  // Error: 未处理的 Promise
+save();  // Error: unhandled Promise
 
-// ✅ 显式处理
+// ✅ Handle explicitly
 await save();
-// 或
+// or
 save().catch(console.error);
-// 或明确忽略
+// or ignore explicitly
 void save();
 
-// ❌ no-misused-promises: 不能在非 async 位置使用 Promise
+// ❌ no-misused-promises: a Promise cannot be used in a non-async position
 const items = [1, 2, 3];
 items.forEach(async (item) => {  // Error!
   await processItem(item);
 });
 
-// ✅ 使用 for...of
+// ✅ Use for...of
 for (const item of items) {
   await processItem(item);
 }
-// 或 Promise.all
+// or Promise.all
 await Promise.all(items.map(processItem));
 ```
 
@@ -523,12 +523,12 @@ await Promise.all(items.map(processItem));
 
 ---
 
-## 测试
+## Testing
 
-### Vitest vs Jest 选择
+### Vitest vs Jest: Which to Choose
 
 ```typescript
-// ✅ 新项目推荐 Vitest（与 Vite 生态集成，原生 ESM 支持）
+// ✅ Vitest recommended for new projects (integrates with the Vite ecosystem, native ESM support)
 // vitest.config.ts
 import { defineConfig } from 'vitest/config';
 
@@ -544,7 +544,7 @@ export default defineConfig({
   },
 });
 
-// ✅ 已有 Jest 项目可保持，注意配置差异
+// ✅ Existing Jest projects can stay on Jest, but note the configuration differences
 // jest.config.ts
 import type { Config } from 'jest';
 
@@ -558,10 +558,10 @@ const config: Config = {
 export default config;
 ```
 
-### 类型测试（tsd / expect-type）
+### Type Testing (tsd / expect-type)
 
 ```typescript
-// ✅ 使用 expect-type 验证类型推断
+// ✅ Use expect-type to verify type inference
 import { expectTypeOf } from 'vitest';
 
 function getFirst<T>(arr: T[]): T | undefined {
@@ -573,40 +573,40 @@ it('should infer correct return type', () => {
   expectTypeOf(result).toEqualTypeOf<number | undefined>();
 });
 
-// ✅ 使用 expect-type 验证函数签名
+// ✅ Use expect-type to verify function signatures
 const fn = (a: string, b: number) => a.repeat(b);
 expectTypeOf(fn).parameters.toEqualTypeOf<[string, number]>();
 expectTypeOf(fn).returns.toBeString();
 
-// ❌ 类型错误会在编译时被捕获
+// ❌ Type errors are caught at compile time
 const result = getFirst(['a', 'b']);
-// @ts-expect-error: 类型不匹配
+// @ts-expect-error: type mismatch
 expectTypeOf(result).toEqualTypeOf<number>();
 ```
 
-### Snapshot 测试最佳实践
+### Snapshot Testing Best Practices
 
 ```typescript
-// ✅ Snapshot 适合：稳定的输出结构、配置对象、错误消息
+// ✅ Snapshots are good for: stable output structures, config objects, error messages
 it('should match serialized config', () => {
   const config = createAppConfig();
   expect(config).toMatchSnapshot();
 });
 
-// ❌ 避免：大对象、动态数据、随机值
+// ❌ Avoid: large objects, dynamic data, random values
 it('should not snapshot large payloads', () => {
   const hugePayload = { users: generateRandomUsers(1000) };
-  // 太长的 snapshot 难以审查，变更时不知道意图
+  // An overly long snapshot is hard to review, and the intent of a change is unclear
 });
 
-// ✅ 使用 inline snapshot 处理小片段
+// ✅ Use inline snapshots for small fragments
 it('should generate correct error message', () => {
   expect(formatError('INVALID_INPUT')).toMatchInlineSnapshot(
     `"Error: Invalid input provided"`
   );
 });
 
-// ✅ 使用 snapshot 属性匹配器处理动态值
+// ✅ Use snapshot property matchers for dynamic values
 it('should match user with generated id', () => {
   expect(createUser('Alice')).toMatchSnapshot({
     id: expect.any(String),
@@ -615,10 +615,10 @@ it('should match user with generated id', () => {
 });
 ```
 
-### Mock 策略
+### Mock Strategy
 
 ```typescript
-// ✅ Vitest: vi.mock 自动 hoist
+// ✅ Vitest: vi.mock is hoisted automatically
 import { vi, describe, it, expect } from 'vitest';
 
 vi.mock('./api', () => ({
@@ -631,22 +631,22 @@ it('should display user', async () => {
   expect(user.name).toBe('Alice');
 });
 
-// ✅ Jest: jest.mock 同样自动 hoist
+// ✅ Jest: jest.mock is hoisted automatically too
 jest.mock('./database', () => ({
   query: jest.fn().mockResolvedValue([{ id: 1 }]),
 }));
 
-// ❌ 避免部分 Mock——测试的是 Mock 而非真实行为
+// ❌ Avoid partial Mocks: you end up testing the Mock, not the real behavior
 jest.mock('./utils', () => ({
   ...jest.requireActual('./utils'),
-  calculateTotal: jest.fn(), // 其他函数是真实的，这个是假的
+  calculateTotal: jest.fn(), // The other functions are real, this one is fake
 }));
 ```
 
-### 测试辅助工具
+### Testing Utilities
 
 ```typescript
-// ✅ 使用 testing-library 进行 DOM 测试
+// ✅ Use testing-library for DOM testing
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -657,7 +657,7 @@ it('should submit form', async () => {
   expect(screen.getByText('Welcome, Alice!')).toBeInTheDocument();
 });
 
-// ✅ 使用 MSW 进行 API mock（Mock Service Worker）
+// ✅ Use MSW for API mocking (Mock Service Worker)
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 
@@ -674,42 +674,42 @@ afterAll(() => server.close());
 
 ---
 
-## 模块解析
+## Module Resolution
 
-### ESM vs CJS 差异和陷阱
+### ESM vs CJS Differences and Pitfalls
 
 ```typescript
-// ❌ CJS 风格在 ESM 中不可用
+// ❌ CJS style is not available in ESM
 // package.json: "type": "module"
 const fs = require('fs');           // Error: require is not defined
 module.exports = { foo: 'bar' };    // Error: module is not defined
 
-// ✅ ESM 正确写法
+// ✅ Correct ESM syntax
 import fs from 'node:fs';
 export const foo = 'bar';
 
-// ✅ 在 ESM 中获取 __dirname
+// ✅ Get __dirname in ESM
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// ❌ ESM 中动态 require
+// ❌ Dynamic require in ESM
 const moduleName = 'lodash';
 const _ = require(moduleName); // Error!
 
-// ✅ ESM 动态 import
+// ✅ Dynamic import in ESM
 const _ = await import(moduleName);
 ```
 
-### tsconfig paths 与 path aliases
+### tsconfig paths and path aliases
 
 ```json
 // tsconfig.json
 {
   "compilerOptions": {
-    // "baseUrl" 在 TS 6.0 弃用、TS 7.0 移除：paths 直接相对于 tsconfig 所在目录解析
+    // "baseUrl" is deprecated in TS 6.0 and removed in TS 7.0: paths are resolved directly relative to the directory containing tsconfig
     "paths": {
       "@/*": ["./src/*"],
       "@components/*": ["./src/components/*"],
@@ -720,18 +720,18 @@ const _ = await import(moduleName);
 ```
 
 ```typescript
-// ✅ 使用别名前
+// ✅ Before using aliases
 import { Button } from '../../components/ui/Button';
 import { formatDate } from '../../../utils/date';
 
-// ✅ 使用别名后——清晰且不易因文件移动而断裂
+// ✅ After using aliases: clear, and not easily broken by moving files
 import { Button } from '@components/ui/Button';
 import { formatDate } from '@utils/date';
 ```
 
 ```typescript
-// ⚠️ tsconfig paths 只影响 TS 编译，不影响运行时
-// 需要配合打包工具（Vite、webpack）或 tsx 的别名解析
+// ⚠️ tsconfig paths only affect TS compilation, not the runtime
+// Needs alias resolution from a bundler (Vite, webpack) or tsx
 
 // vite.config.ts
 import { resolve } from 'node:path';
@@ -744,8 +744,8 @@ export default defineConfig({
   },
 });
 
-// ⚠️ 发布 npm 包时，tsconfig paths 不会自动解析
-// 需要 tsc-alias 或 tsconfig-paths 处理
+// ⚠️ When publishing an npm package, tsconfig paths are not resolved automatically
+// Needs tsc-alias or tsconfig-paths to handle it
 ```
 
 ### package.json exports field
@@ -755,7 +755,7 @@ export default defineConfig({
 {
   "name": "my-library",
   "exports": {
-    // "types" 必须排在第一位：TypeScript 按顺序匹配条件，排在后面会被 import/require 抢先
+    // "types" must come first: TypeScript matches conditions in order, so if it comes later, import/require take precedence
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
@@ -772,32 +772,32 @@ export default defineConfig({
 ```
 
 ```typescript
-// ✅ 消费者使用
-import { foo } from 'my-library';        // 解析到 "." 条件
-import { bar } from 'my-library/utils';   // 解析到 "./utils" 条件
+// ✅ Consumer usage
+import { foo } from 'my-library';        // Resolves to the "." entry
+import { bar } from 'my-library/utils';   // Resolves to the "./utils" entry
 
-// ❌ 没有 exports 映射的路径无法访问
+// ❌ Paths with no exports mapping cannot be accessed
 import { secret } from 'my-library/internal'; // Error!
 ```
 
-### 动态 import() 和代码分割
+### Dynamic import() and Code Splitting
 
 ```typescript
-// ✅ 条件加载模块
+// ✅ Load modules conditionally
 async function loadChartLibrary() {
-  if (typeof window === 'undefined') return null; // SSR 跳过
+  if (typeof window === 'undefined') return null; // Skip during SSR
   const { Chart } = await import('chart.js');
   return Chart;
 }
 
-// ✅ React 懒加载组件
+// ✅ Lazy-load React components
 const AdminPanel = lazy(() => import('./AdminPanel'));
-// 配合 Suspense 使用
+// Use together with Suspense
 <Suspense fallback={<Loading />}>
   <AdminPanel />
 </Suspense>
 
-// ✅ 带错误处理
+// ✅ With error handling
 const AdminPanel = lazy(() =>
   import('./AdminPanel').catch(() => ({
     default: () => <ErrorFallback />,
@@ -807,32 +807,32 @@ const AdminPanel = lazy(() =>
 
 ---
 
-## TS 4.9+ / 5.x 新特性
+## TS 4.9+ / 5.x New Features
 
-### satisfies 关键字（TS 4.9+）
+### satisfies Keyword (TS 4.9+)
 
 ```typescript
-// ❌ 没有 satisfies：类型太宽泛
+// ❌ Without satisfies: type is too broad
 const palette = {
   red: '#ff0000',
   green: '#00ff00',
   blue: '#0000ff',
 };
-// palette.red 类型是 string，丢失了 '#ff0000' 的精确值
+// palette.red has type string, losing the exact value '#ff0000'
 
-// ✅ satisfies 保留字面量类型，同时验证结构
+// ✅ satisfies preserves literal types while validating the structure
 const palette = {
   red: '#ff0000',
   green: '#00ff00',
   blue: '#0000ff',
 } satisfies Record<string, `#${string}`>;
 
-// palette.red 类型是 '#ff0000'（不是 string）
-// 但添加新属性时仍会验证格式
+// palette.red has type '#ff0000' (not string)
+// but the format is still validated when new properties are added
 ```
 
 ```typescript
-// ✅ satisfies 用于验证对象符合接口
+// ✅ Use satisfies to validate that an object conforms to an interface
 interface UserConfig {
   theme: 'light' | 'dark';
   locale: string;
@@ -842,29 +842,29 @@ const config = {
   theme: 'dark',
   locale: 'en-US',
 } satisfies UserConfig;
-// config.theme 类型是 'dark'（不是 'light' | 'dark'）
-// 所有属性都通过 satisfies 类型检查
+// config.theme has type 'dark' (not 'light' | 'dark')
+// All properties pass the satisfies type check
 ```
 
-### const 类型参数（TS 5.0+）
+### const Type Parameters (TS 5.0+)
 
 ```typescript
-// ❌ 之前：需要 as const 断言
+// ❌ Before: requires an as const assertion
 function getRoutes<T extends readonly string[]>(routes: T) {
   return routes;
 }
 const routes = getRoutes(['home', 'about'] as const);
 
-// ✅ TS 5.0+：const 类型参数
+// ✅ TS 5.0+: const type parameter
 function getRoutes<const T extends readonly string[]>(routes: T) {
   return routes;
 }
 const routes = getRoutes(['home', 'about']);
-// routes 类型是 readonly ['home', 'about']
+// routes has type readonly ['home', 'about']
 ```
 
 ```typescript
-// ✅ 真实场景：类型安全的配置对象
+// ✅ Real-world scenario: type-safe config object
 declare function createConfig<const T extends Record<string, unknown>>(
   config: T
 ): T;
@@ -873,13 +873,13 @@ const config = createConfig({
   api: { url: 'https://api.example.com', version: 2 },
   features: { newDashboard: true },
 });
-// config.api.url 类型是 'https://api.example.com'（字面量）
+// config.api.url has type 'https://api.example.com' (literal)
 ```
 
-### 装饰器（Stage 3 Decorators, TS 5.0+）
+### Stage 3 Decorators (TS 5.0+)
 
 ```typescript
-// ✅ Stage 3 装饰器（TS 5.0+，experimentalDecorators 不再需要）
+// ✅ Stage 3 decorators (TS 5.0+, experimentalDecorators no longer needed)
 function logged<This, Args extends unknown[], Return>(
   target: (this: This, ...args: Args) => Return,
   context: ClassMethodDecoratorContext
@@ -897,21 +897,21 @@ class Calculator {
   }
 }
 
-// 输出: Calling add with [1, 2]
+// Output: Calling add with [1, 2]
 new Calculator().add(1, 2);
 ```
 
 ```typescript
-// ⚠️ Stage 3 装饰器与旧版 experimentalDecorators 不同
-// 旧版：tsconfig 中需要 "experimentalDecorators": true
-// 新版（TS 5.0+）：默认支持，无需额外配置
+// ⚠️ Stage 3 decorators differ from the legacy experimentalDecorators
+// Legacy: tsconfig requires "experimentalDecorators": true
+// New (TS 5.0+): supported by default, no extra configuration needed
 
-// ❌ 旧版装饰器签名（仍支持但标记为 legacy）
+// ❌ Legacy decorator signature (still supported but marked as legacy)
 function deprecated<T extends { new (...args: any[]): {} }>(constructor: T) {
   return class extends constructor { /* ... */ };
 }
 
-// ✅ 新版装饰器按类型区分 context
+// ✅ New-style decorators receive a context specific to the decorator kind
 function sealed<T extends { new (...args: any[]): {} }>(
   target: T,
   context: ClassDecoratorContext
@@ -920,10 +920,10 @@ function sealed<T extends { new (...args: any[]): {} }>(
 }
 ```
 
-### using 声明（显式资源管理，TS 5.2+）
+### using Declarations (Explicit Resource Management, TS 5.2+)
 
 ```typescript
-// ✅ 使用 Symbol.dispose 实现自动清理
+// ✅ Use Symbol.dispose for automatic cleanup
 class TempFile implements Disposable {
   private path: string;
 
@@ -934,21 +934,21 @@ class TempFile implements Disposable {
   write(data: string) { /* ... */ }
 
   [Symbol.dispose]() {
-    // 自动清理——无论函数如何退出（正常/异常）
+    // Automatic cleanup, however the function exits (normal return or exception)
     fs.unlinkSync(this.path);
     console.log(`Cleaned up: ${this.path}`);
   }
 }
 
 function processFile() {
-  using file = new TempFile(); // using 声明
+  using file = new TempFile(); // using declaration
   file.write('data');
-  // 作用域结束时自动调用 file[Symbol.dispose]()
+  // file[Symbol.dispose]() is called automatically at the end of the scope
 }
 ```
 
 ```typescript
-// ✅ AsyncDisposable 用于异步资源（TS 5.2+）
+// ✅ AsyncDisposable for async resources (TS 5.2+)
 class DatabaseConnection implements AsyncDisposable {
   private db: sqlite3.Database;
 
@@ -964,56 +964,56 @@ class DatabaseConnection implements AsyncDisposable {
 async function query() {
   await using conn = new DatabaseConnection(); // await using
   await conn.connect();
-  // 作用域结束时自动 await conn[Symbol.asyncDispose]()
+  // await conn[Symbol.asyncDispose]() is called automatically at the end of the scope
 }
 ```
 
-### 枚举改进（TS 5.0+）
+### Enum Improvements (TS 5.0+)
 
 ```typescript
-// ✅ 所有枚举现在都是 union 枚举（TS 5.0+）
+// ✅ All enums are now union enums (TS 5.0+)
 enum Color {
   Red = 'RED',
   Green = 'GREEN',
 }
 
-// 之前：Color 作为类型时行为不一致
-// 现在：Color 完全作为字符串字面量联合类型
-const color: Color = Color.Red; // TypeScript 现在对 Color 类型有更好的推断
+// Before: Color behaved inconsistently when used as a type
+// Now: Color is treated entirely as a union of string literal types
+const color: Color = Color.Red; // TypeScript now infers the Color type better
 ```
 
 ## Review Checklist
 
-### 类型系统
-- [ ] 没有使用 `any`（使用 `unknown` + 类型守卫代替）
-- [ ] 接口和类型定义完整且有意义的命名
-- [ ] 使用泛型提高代码复用性
-- [ ] 联合类型有正确的类型收窄
-- [ ] 善用工具类型（Partial、Pick、Omit 等）
+### Type System
+- [ ] No use of `any` (use `unknown` + type guards instead)
+- [ ] Interfaces and types are fully defined with meaningful names
+- [ ] Use generics to improve code reuse
+- [ ] Union types are narrowed correctly
+- [ ] Make good use of utility types (Partial, Pick, Omit, etc.)
 
-### 泛型
-- [ ] 泛型有适当的约束（extends）
-- [ ] 泛型参数有合理的默认值
-- [ ] 避免过度泛型化（KISS 原则）
+### Generics
+- [ ] Generics have appropriate constraints (extends)
+- [ ] Generic parameters have sensible defaults
+- [ ] Avoid excessive use of generics (KISS principle)
 
-### Strict 模式
-- [ ] tsconfig.json 启用了 strict: true
-- [ ] 启用了 noUncheckedIndexedAccess
-- [ ] 没有使用 @ts-ignore（改用 @ts-expect-error）
+### Strict Mode
+- [ ] tsconfig.json has strict: true enabled
+- [ ] noUncheckedIndexedAccess is enabled
+- [ ] No use of @ts-ignore (use @ts-expect-error instead)
 
-### 异步代码
-- [ ] async 函数有错误处理
-- [ ] Promise rejection 被正确处理
-- [ ] 没有 floating promises（未处理的 Promise）
-- [ ] 并发请求使用 Promise.all 或 Promise.allSettled
-- [ ] 竞态条件使用 AbortController 处理
+### Async Code
+- [ ] async functions have error handling
+- [ ] Promise rejections are handled correctly
+- [ ] No floating promises (unhandled Promises)
+- [ ] Concurrent requests use Promise.all or Promise.allSettled
+- [ ] Race conditions are handled with AbortController
 
-### 不可变性
-- [ ] 不直接修改函数参数
-- [ ] 使用 spread 操作符创建新对象/数组
-- [ ] 考虑使用 readonly 修饰符
+### Immutability
+- [ ] Do not mutate function parameters directly
+- [ ] Use the spread operator to create new objects/arrays
+- [ ] Consider using the readonly modifier
 
 ### ESLint
-- [ ] 使用 @typescript-eslint/recommended
-- [ ] 没有 ESLint 警告或错误
-- [ ] 使用 consistent-type-imports
+- [ ] Use @typescript-eslint/recommended
+- [ ] No ESLint warnings or errors
+- [ ] Use consistent-type-imports

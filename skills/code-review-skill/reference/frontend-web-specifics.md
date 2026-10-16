@@ -7,7 +7,7 @@ overlay stacking, and the loading/empty/error triad.
 Read this for any PR that touches UI. Most items here are cheap greps — run them,
 do not eyeball them.
 
-## 目录
+## Contents
 
 - [Global stylesheets and class-name collisions](#global-stylesheets-and-class-name-collisions)
 - [List keys](#list-keys)
@@ -66,20 +66,20 @@ namespace (`.template-builder-editor-preview-issues` vs
 `key` must be **unique among siblings** and **stable across renders**.
 
 ```tsx
-// ❌ 索引：删除/重排后 React 会复用错误的 DOM 与 state
+// ❌ Index: after a delete or reorder React reuses the wrong DOM and state
 {items.map((item, i) => <Row key={i} item={item} />)}
 
-// ❌ 可选字段拼接：两个都缺失时得到同一个 key
+// ❌ Concatenated optional fields: when both are missing, two items get the same key
 {issues.map(issue => <li key={`${issue.code}-${issue.slug ?? issue.mediaId}`} />)}
-//   两个 code 相同、slug 和 mediaId 都为 undefined 的 issue → "code-undefined" ×2
+//   two issues with the same code and undefined slug and mediaId → "code-undefined" ×2
 
-// ❌ 随机值：每次渲染都变，整棵子树重建，输入框失焦
+// ❌ Random value: changes on every render, the whole subtree remounts, inputs lose focus
 {items.map(item => <Row key={crypto.randomUUID()} item={item} />)}
 
-// ✅ 真正的 id
+// ✅ A real id
 {items.map(item => <Row key={item.id} item={item} />)}
 
-// ✅ 没有 id 时：可选字段 + 索引兜底
+// ✅ No id: optional fields with the index as a fallback
 {issues.map((issue, i) => <li key={`${issue.code}-${issue.slug ?? issue.mediaId ?? i}`} />)}
 ```
 

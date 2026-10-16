@@ -1,0 +1,39 @@
+{
+  "name": "gated-review",
+  "version": "1.2.0",
+  "description": "Evidence-gated code review: business / design / security / full modes, TS-React, NestJS, Python-FastAPI; inline GitLab MR comments only for findings that survived a check",
+  "author": {
+    "name": "Sergey Andreev",
+    "url": "https://github.com/elenik72"
+  },
+  "homepage": "https://github.com/elenik72/gated-review",
+  "repository": "https://github.com/elenik72/gated-review",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "gitlab",
+    "typescript",
+    "react",
+    "nestjs",
+    "python",
+    "fastapi",
+    "business-logic"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Gated Review",
+    "shortDescription": "Evidence-gated code review for GitLab MRs",
+    "longDescription": "A finding becomes an inline MR comment only after a cheap check that could have refuted it (grep, type-checker, test, repo rule, named sibling) failed to. Modes: business, design, security, full.",
+    "developerName": "Sergey Andreev",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Instructions"
+    ],
+    "websiteURL": "https://github.com/elenik72/gated-review",
+    "defaultPrompt": [
+      "Review MR !123 against its ticket.",
+      "Review this diff for security issues.",
+      "Re-review the MR after the author's fixes."
+    ]
+  }
+}

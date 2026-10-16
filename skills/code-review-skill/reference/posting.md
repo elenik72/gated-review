@@ -45,7 +45,7 @@ is no error to notice — the review just silently ends up as a pile of page-lev
 detached from the code. The same trap applies to `--input file.json`, which glab sends
 without a content-type (`HTTP 415`). The position object must go as a JSON request body.
 
-[`scripts/gitlab_comment.py`](scripts/gitlab_comment.py) does exactly that, and **verifies
+[`scripts/gitlab_comment.py`](../scripts/gitlab_comment.py) does exactly that, and **verifies
 every post**: if the created note comes back as anything other than a `DiffNote` on the
 requested line, it deletes the note it just made and exits non-zero. Never hand-roll the
 request; if the script cannot be used, the fallback is `curl` with
@@ -88,7 +88,8 @@ python3 $S delete  --mr group/project!69 --note <note_id>     # undo a bad post
 instead (in `post-batch` input, add `"old_line": N` to that item). A "NOT inline" failure almost always means the chosen line is not part of the
 diff — re-anchor the finding to a changed line rather than falling back to a page-level
 comment. Auth reuses the `glab` token (`glab auth login --hostname <host>`), so no separate
-login; the host defaults to `gitlab.task4work.info` and is overridable with `--host`.
+login. The host is taken from `origin` of the repo under review; `GITLAB_HOST` or
+`--host` override it.
 
 **Verify before reporting done.** After posting, run `threads` once and confirm every
 finding shows as `DiffNote` with a file and line. Reporting a review as posted when the

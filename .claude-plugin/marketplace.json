@@ -2,7 +2,9 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "review-tools",
   "description": "Code review plugins for Claude Code and Codex",
-  "owner": { "name": "Sergey Andreev" },
+  "owner": {
+    "name": "Sergey Andreev"
+  },
   "plugins": [
     {
       "name": "gated-review",

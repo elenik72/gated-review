@@ -10,6 +10,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from argparse import Namespace
@@ -247,6 +248,42 @@ class StatsTest(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════
 # cli round-trip
 # ═══════════════════════════════════════════════════════════════
+
+class HideFromGitTest(unittest.TestCase):
+    """Review state must not end up in a commit of the repo under review."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        subprocess.run(["git", "init", "-q", self.root], check=True)
+        self.exclude = os.path.join(self.root, ".git", "info", "exclude")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_init_excludes_state_once_and_keeps_existing_lines(self):
+        with open(self.exclude, "w", encoding="utf-8") as fh:
+            fh.write("*.log")  # no trailing newline on purpose
+        finding.hide_from_git(self.root)
+        finding.hide_from_git(self.root)
+        lines = open(self.exclude, encoding="utf-8").read().splitlines()
+        self.assertEqual(lines, ["*.log", "/.review/", "/REVIEW-NOTES.md"])
+
+    def test_state_files_are_untracked_by_git(self):
+        os.makedirs(os.path.join(self.root, ".review"))
+        open(os.path.join(self.root, ".review", "state.json"), "w").close()
+        open(os.path.join(self.root, "REVIEW-NOTES.md"), "w").close()
+        finding.hide_from_git(self.root)
+        status = subprocess.run(["git", "-C", self.root, "status", "--porcelain"],
+                                capture_output=True, text=True).stdout
+        self.assertEqual(status, "")
+
+    def test_outside_git_does_nothing(self):
+        plain = tempfile.mkdtemp()
+        try:
+            finding.hide_from_git(plain)
+        finally:
+            shutil.rmtree(plain, ignore_errors=True)
+
 
 class CliTest(unittest.TestCase):
     def setUp(self):
