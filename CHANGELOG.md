@@ -10,7 +10,8 @@
   Code ones; manifests carry `homepage` and `repository`.
 - References inherited from awesome-skills/code-review-skill are fully in English (the Chinese parts are
   translated); table-of-contents anchors follow the new headings.
-- README rewritten: what the author of an MR sees, how the gate works, install for Claude Code and Codex.
+- README rewritten: what the author of an MR sees, how the gate works, how it is built (parts, review
+  phases, finding types, what `render` checks), install for Claude Code and Codex.
 - Fixed: the link from `reference/posting.md` to the posting script; the right edge of the error-hierarchy
   diagram.
 
