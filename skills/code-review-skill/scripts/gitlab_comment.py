@@ -37,6 +37,11 @@ exactly what `finding.py render` produces for a finding at that location in `.re
 (`--dir`, default `.`). Anything else is refused before the first request, so the gate
 cannot be skipped by writing a comment by hand. `reply` / `resolve` stay free.
 
+`post` and `post-batch` also refuse when the MR head is not the commit the review ran on
+(`head` in `.review/state.json`): GitLab anchors a comment to the latest version, so after a
+push it would land on a line of code nobody checked. Re-check the findings on the new code
+and move the review with `finding.py rehead --why "..."`.
+
 Host: `--host`, else GITLAB_HOST, else the host of the `origin` remote of the repo
 under review (`--dir`).
 Auth: reuses the `glab` CLI token (`glab config get token --host <host>`), or
@@ -177,7 +182,10 @@ def post_one(host, project, iid, refs, file, line, body, *, old_line=None) -> di
 
 
 def gated(review_dir: str, items: list[dict]) -> list[tuple]:
-    """Only what passed the gate may be posted: (file, line, old_line, body) per item.
+    """Only what passed the gate may be posted: (file, line, old_line, body, resolve) per item.
+
+    `resolve` comes from the review state, not from the item: a note for the author is closed
+    right after posting, a finding stays open.
 
     An item is either a `finding.py render --json` row ({"location", "body"}, optional
     "old_line") or {"file", "line"|"old_line", "body"|"body_file"}. Its body must equal
@@ -189,7 +197,7 @@ def gated(review_dir: str, items: list[dict]) -> list[tuple]:
     except finding.Refused as exc:
         sys.exit(f"REFUSED: {exc}\nOnly findings that passed finding.py are posted; "
                  "a question to the author — post --question.")
-    allowed = {(f["location"], finding.render_comment(f).rstrip("\n")) for f in state["findings"]}
+    allowed = {(c["location"], c["body"].rstrip("\n")): c["resolve"] for c in finding.published(state)}
     out, bad = [], []
     for item in items:
         body = item.get("body")
@@ -203,9 +211,10 @@ def gated(review_dir: str, items: list[dict]) -> list[tuple]:
         else:
             file, line, old = item["file"], item.get("line"), item.get("old_line")
             location = f"{file}:{line if line is not None else old}"
-        if (location, body.rstrip("\n")) not in allowed:
+        key = (location, body.rstrip("\n"))
+        if key not in allowed:
             bad.append(location)
-        out.append((file, line, old, body))
+        out.append((file, line, old, body, allowed.get(key, False)))
     if bad:
         sys.exit("REFUSED: not a finding that passed finding.py (its text or line differs): "
                  + ", ".join(bad) + "\nRecord it with `finding.py add` and post the output of "
@@ -213,8 +222,21 @@ def gated(review_dir: str, items: list[dict]) -> list[tuple]:
     return out
 
 
-BOT = "**[ai-review-bot]**"
-QUESTION_HEAD = BOT + " · Вопрос · Блокирующее: нет"
+def check_head(review_dir: str, refs: dict) -> None:
+    """A comment lands on the code that was reviewed: refuse when the MR moved on since."""
+    try:
+        reviewed = finding.load_state(review_dir).get("head")
+    except finding.Refused:
+        return  # a question to the author without a review state: nothing to compare with
+    head = refs.get("head_sha") or ""
+    if reviewed and not head.startswith(reviewed):
+        sys.exit(f"REFUSED: the review ran on {reviewed}, the MR head is now {head[:8]} — new commits "
+                 "arrived after the review, and GitLab would anchor the comments to lines nobody "
+                 "checked. Update the working copy to the MR head, re-check every finding's location "
+                 "on the new diff, then `finding.py rehead --why \"<what was re-checked>\"`.")
+
+
+BOT, QUESTION_HEAD = finding.BOT, finding.QUESTION_HEAD
 
 
 def bot_body(body: str, what: str) -> str:
@@ -240,22 +262,28 @@ def cmd_post(args):
     project, iid = parse_mr(args.mr)
     body = args.body if args.body else open(args.body_file, encoding="utf-8").read()
     if args.question:
-        file, line, old, body = args.file, args.line, args.old_line, question_body(body)
+        file, line, old, body, resolve = args.file, args.line, args.old_line, question_body(body), False
     else:
-        [(file, line, old, body)] = gated(
+        [(file, line, old, body, resolve)] = gated(
             args.dir, [{"file": args.file, "line": args.line, "old_line": args.old_line, "body": body}])
     refs = diff_refs(args.host, project, iid)
+    check_head(args.dir, refs)
     res = post_one(args.host, project, iid, refs, file, line, body, old_line=old)
     print(f"inline ok  {res['file']}:{res['line']}  thread={res['thread']} note={res['note']}")
+    if resolve:
+        resolve_thread(args.host, project, iid, res["thread"])
 
 
 def cmd_post_batch(args):
     project, iid = parse_mr(args.mr)
     items = gated(args.dir, json.load(open(args.input, encoding="utf-8")))
     refs = diff_refs(args.host, project, iid)
-    for file, line, old, body in items:
+    check_head(args.dir, refs)
+    for file, line, old, body, resolve in items:
         res = post_one(args.host, project, iid, refs, file, line, body, old_line=old)
         print(f"inline ok  {res['file']}:{res['line']}  thread={res['thread']} note={res['note']}")
+        if resolve:
+            resolve_thread(args.host, project, iid, res["thread"])
 
 
 def cmd_threads(args):
@@ -297,15 +325,16 @@ def cmd_reply(args):
     print(f"replied in {args.thread} note={note['id']}")
 
 
+def resolve_thread(host, project, iid, thread):
+    """A note for the author needs no answer: closed at once, it does not hold the merge."""
+    api(host, f"projects/{project}/merge_requests/{iid}/discussions/{thread}",
+        method="PUT", payload={"resolved": True})
+    print(f"resolved {thread}")
+
+
 def cmd_resolve(args):
     project, iid = parse_mr(args.mr)
-    api(
-        args.host,
-        f"projects/{project}/merge_requests/{iid}/discussions/{args.thread}",
-        method="PUT",
-        payload={"resolved": True},
-    )
-    print(f"resolved {args.thread}")
+    resolve_thread(args.host, project, iid, args.thread)
 
 
 def cmd_delete(args):

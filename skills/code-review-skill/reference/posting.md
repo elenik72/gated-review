@@ -13,17 +13,34 @@ When review findings are posted to a pull/merge request:
   still anchor it to the most relevant changed line and name the other place in
   the text.
 - **One comment per finding.** Do not bundle several findings into one comment.
-- **Start every comment with the bold tag and its priority on the first line**,
+- **Start every comment with the bold tag, its type and weight on the first line**,
   exactly in this shape (keep `**[ai-review-bot]**` bold, in square brackets):
 
   ```
-  **[ai-review-bot]** · Приоритет: <важно | желательно | не важно> · Блокирующее: <да | нет> · <подтверждено | предположение>
+  **[ai-review-bot]** · <тип> · <блокирует мерж | желательно | не важно> · <подтверждено | предположение>
   ```
 
-  Translate the labels to the reader's language if it isn't Russian, but always
-  keep the `**[ai-review-bot]**` tag and always state all three: the priority,
-  whether it blocks the merge, and the verdict from *The Gate* — подтверждено or
-  предположение.
+  `finding.py render` writes it; never type it by hand. The type is not chosen — it
+  follows from the claim form the gate checked:
+
+  | Тип | Формы | Что значит для автора |
+  |---|---|---|
+  | 🐞 Баг | `breaks`, `unread` | ломается или не работает |
+  | 📋 Требование | `unimplemented`, `unrequested` | расходится с тикетом |
+  | 🔀 Коллизия | `collision` | столкнётся с соседней веткой — договориться до мержа |
+  | ⚠️ Риск | `invariant` | корректность держится на незакреплённом условии |
+  | 📐 Единообразие | `drift`, `rule` | расходится с соседями или с правилом репо |
+
+  The weight is the severity in a word: blocking → «блокирует мерж», important →
+  «желательно», nit → «не важно».
+- **Two more headers, each with its own command.** A question to the author —
+  `**[ai-review-bot]** · ❓ Вопрос`, posted with `post --question`; it claims nothing and
+  stays open for the answer. A note for the author — `**[ai-review-bot]** · 💬 Заметка`, written
+  by `finding.py fyi --location <path:line> --source <ticket | MR | path:line> --text "…"`:
+  worth knowing, nothing to fix (merge order with a sibling MR, a ticket that contradicts the
+  docs, debt outside this MR). It needs a source, stays under 240 characters, carries no verdict
+  and no fix, at most 3 per MR; `post-batch` posts it with the findings and closes its thread at
+  once, so it never holds a merge that requires resolved threads.
 - **The body is built by `finding.py render`, in this order:** the claim in one
   sentence → «Ломается при» with one scenario → «Что сделать» as up to three
   steps (a list when there is more than one) → the sibling / rule / assumption
@@ -57,7 +74,7 @@ location (`.review/` in the current directory, or `--dir`). An edited body, a co
 written by hand or a finding moved to another line is refused before the first request —
 the fix is `finding.py add`, then posting its output unchanged. A question to the author
 claims nothing and goes with `post --question`: its first line is exactly
-`**[ai-review-bot]** · Вопрос · Блокирующее: нет` (no verdict — it claims nothing); one that carries a
+`**[ai-review-bot]** · ❓ Вопрос` (no verdict — it claims nothing); one that carries a
 verdict or a failure scenario is refused as a disguised finding. A `reply` must start with
 `**[ai-review-bot]**` too — `threads` finds the re-review work by that tag. `resolve` is not gated.
 
@@ -109,5 +126,7 @@ files. Before re-reviewing after the author pushed fixes, list the existing
 - **Not fixed, or fixed differently than needed** — reply with what is still missing
   and leave the thread open. Never resolve a thread whose problem is still in the code.
 - **New commits move line numbers.** `finding.py render` warns when HEAD has moved
-  since `init`; re-verify each finding's `--location` against the current diff before
-  posting anything new.
+  since `init`, and `post` / `post-batch` refuse while the MR head differs from the commit
+  the review ran on — GitLab anchors to the latest version, so the comment would land on
+  code nobody checked. Re-verify each finding's `--location` against the current diff,
+  then move the review: `finding.py rehead --why "<what was re-checked>"`.

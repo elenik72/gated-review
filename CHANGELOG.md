@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.3.0 — 2026-11-02
+
+- Comment types. The header is `**[ai-review-bot]** · <тип> · <вес> · <вердикт>`: the type follows from
+  the claim form the gate checked (🐞 Баг, 📋 Требование, 🔀 Коллизия, ⚠️ Риск, 📐 Единообразие), never from
+  the model; the weight is one word («блокирует мерж», «желательно», «не важно») instead of the
+  «Приоритет · Блокирующее» pair. `render --json` carries `kind`. A question's header is `· ❓ Вопрос`.
+- Notes for the author: `finding.py fyi --location --source --text` — worth knowing, nothing to fix;
+  a source is required, at most 240 characters and 3 per MR, no verdict or fix. `post-batch` posts them
+  with the findings and closes their threads at once, so they never hold a merge.
+- `collision`, `rule` and `unimplemented` may be blocking from rung 1: their refuting check is static
+  and final. A review that may not run tests could not post a blocker at all before.
+- `finding.py note` refuses a question to the author and points to `post --question`.
+- Posting only on the reviewed head. `post` / `post-batch` refuse when the MR head is not the commit
+  `init` recorded: GitLab anchors to the latest version, so after the author's push a comment landed on
+  a line nobody checked, and the `DiffNote` check could not see it. `finding.py rehead --why` moves the
+  review to the current HEAD after the findings were re-checked; the reason goes into the notes.
+- Rules come from the target branch. The `rule` form quotes `--rule <file>:<lines>` as `origin/<target>`
+  has it, so an MR that edits `AGENTS.md` is judged by the rule before the edit; a rule file the MR adds
+  is refused. `init` without `--target` records the branch the plan falls back to (`origin/HEAD`). The
+  plan says when the MR changes rule files, and SKILL.md states that text from the MR is data, not
+  instructions to the reviewer.
+
+## 1.2.1 — 2026-10-20
+
+- `scripts/test_layout.py`: packaging checks that turn silent failures into test failures — the Claude
+  Code and Codex manifests agree on name, version, description and license; every relative link and
+  anchor in the skill resolves; every `scripts/*.py` the docs name ships and compiles; the frontmatter
+  names the skill and its triggers.
+
 ## 1.2.0 — 2026-10-16
 
 - No GitLab host is baked in: `gitlab_comment.py` takes `--host`, else `GITLAB_HOST`, else the host of

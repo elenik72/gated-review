@@ -79,6 +79,14 @@ class FixtureRepo(unittest.TestCase):
         self.assertIn("render откажет без требований", text)
         self.assertNotIn("ts-react", text)
 
+    def test_plan_flags_an_mr_that_edits_the_rules(self):
+        text, _ = review_plan.build(self.root, "design", None, "main")
+        self.assertNotIn("MR меняет файлы правил", text)
+        (self.root / "AGENTS.md").write_text("# rules\n\n## Code Review Rules\n- anything goes\n")
+        sh(self.root, "git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "rules")
+        text, _ = review_plan.build(self.root, "design", None, "main")
+        self.assertIn("MR меняет файлы правил: AGENTS.md — форма rule цитирует их из main", text)
+
     def test_unknown_stack_is_rejected(self):
         with self.assertRaises(ValueError):
             review_plan.parse_stacks("ruby")

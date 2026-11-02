@@ -14,7 +14,7 @@ A finding is accepted only if it carries all of:
   * one of three kinds of grounding:
         --evidence "<cmd>" --output "<what it printed>"   -> подтверждено
         --sibling path/Sibling.tsx:41                     -> подтверждено (non-executable form)
-        --rule AGENTS.md:12-14                            -> подтверждено (form "rule": the lines are read and quoted)
+        --rule AGENTS.md:12-14                            -> подтверждено (form "rule": the lines are quoted from the target branch)
         --assumption "<why it could not be checked>"      -> предположение
   * a severity the evidence actually supports      (--severity / --rung)
 
@@ -58,9 +58,9 @@ ASSUMED = "предположение"
 
 # severity: rank is compared against the cap the evidence ladder allows
 SEVERITIES = {
-    "blocking": {"icon": "🔴", "prio": "важно", "blocks": "да", "rank": 3},
-    "important": {"icon": "🟡", "prio": "желательно", "blocks": "нет", "rank": 2},
-    "nit": {"icon": "🟢", "prio": "не важно", "blocks": "нет", "rank": 1},
+    "blocking": {"icon": "🔴", "weight": "блокирует мерж", "rank": 3},
+    "important": {"icon": "🟡", "weight": "желательно", "rank": 2},
+    "nit": {"icon": "🟢", "weight": "не важно", "rank": 1},
 }
 
 # rung -> (what you did, highest severity rank it supports)
@@ -84,12 +84,36 @@ CLAIM_FORMS = {
     "rule": ("нарушает правило самого репо", False),
     "unrequested": ("поведение, которого не требует тикет", False),
 }
+# The type the author sees comes from the form the gate checked, never from the model.
+KINDS = {
+    "breaks": ("bug", "🐞 Баг"),
+    "unread": ("bug", "🐞 Баг"),
+    "unimplemented": ("requirement", "📋 Требование"),
+    "unrequested": ("requirement", "📋 Требование"),
+    "collision": ("collision", "🔀 Коллизия"),
+    "invariant": ("risk", "⚠️ Риск"),
+    "drift": ("consistency", "📐 Единообразие"),
+    "rule": ("consistency", "📐 Единообразие"),
+}
+# Their refuting check is static and final — `git grep` on the sibling branch, the quoted repo
+# rule, the quoted requirement — so reading the code (rung 1) may carry a blocker. Claims about
+# behaviour (breaks, invariant) still need a test run.
+STATIC_FORMS = ("collision", "rule", "unimplemented")
+
+BOT = "**[ai-review-bot]**"
+QUESTION_HEAD = BOT + " · ❓ Вопрос"
+FYI_HEAD = BOT + " · 💬 Заметка"
+FYI_LIMIT, FYI_WIDTH = 3, 240
+QUESTION_LIKE = re.compile(
+    r"^\s*вопрос(\s+к)?\s+автор|(уточнить|спросить|подтвердить)\s+(у\s+)?автор|подтвердить в треде",
+    re.IGNORECASE)
+
 # A comment is read in the diff, between the author's own lines: it has to be scannable.
 LIMITS = {"claim": 160, "breaks_when": 240, "evidence": 160, "assumption": 200}
 FIX_STEPS, FIX_WIDTH = 3, 160
 OUTPUT_LINES, OUTPUT_WIDTH = 10, 120
 ELSEWHERE = ("Контекст — что уже сделано, что делать не нужно, планы на другие MR и задачи — не в комментарий,\n"
-             "а в сводку ревью: finding.py note \"<текст>\".")
+             "а в заметку для автора (finding.py fyi, до %d на MR) или в сводку ревью (finding.py note)." % FYI_LIMIT)
 RULE_RE = re.compile(r"^(?P<path>[^\s:]+):(?P<a>\d+)(?:-(?P<b>\d+))?$")
 REQ_STATUSES = {
     "met": ("✅", "выполнено"),
@@ -127,6 +151,7 @@ def blank_state():
         "coverage": [],
         "plan": [],
         "notes": [],
+        "fyi": [],
         "mode": "full",
         "stacks": [],
         "requirements": [],
@@ -175,20 +200,61 @@ def looks_like_placeholder(text):
     return any(low == p or low.startswith(p) for p in PLACEHOLDERS)
 
 
-def read_rule(root, rule):
-    """The quoted lines of a repo rule, or Refused: a citation must point at real text."""
+def git_out(root, *args):
+    """stdout of a git command in the reviewed repo, or None when it fails."""
+    try:
+        out = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=10)
+    except OSError:
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def text_at(root, target, path):
+    """(revision, text) of `path` on the target branch; text is None when the file is not there."""
+    for rev in [target] + (["origin/" + target] if "/" not in target else []):
+        if git_out(root, "rev-parse", "--verify", "--quiet", rev + "^{commit}") is not None:
+            return rev, git_out(root, "show", "%s:./%s" % (rev, path))
+    return None, None
+
+
+def read_rule(root, rule, target=None):
+    """The quoted lines of a repo rule, or Refused: a citation must point at real text.
+
+    With a target the rule is read as the target branch has it: the MR under review may edit
+    AGENTS.md, and it must not be judged by the rule it is changing.
+    """
     m = RULE_RE.match(rule or "")
     if not m:
         raise Refused("--rule должен быть <файл>:<строка> или <файл>:<с>-<по>, получено %r" % rule)
     a, b = int(m.group("a")), int(m.group("b") or m.group("a"))
-    path = os.path.join(root, m.group("path"))
-    if not os.path.isfile(path):
+    rel = m.group("path")
+    path = os.path.join(root, rel)
+    if target:
+        rev, text = text_at(root, target, rel)
+        if rev is None:
+            raise Refused(
+                "цель мержа %s не читается git'ом — git fetch или finding.py init --force --target <ветка>.\n"
+                "Правило берётся из цели мержа: MR не может переписать правило, по которому его ревьюят."
+                % target)
+        if text is None and os.path.isfile(path):
+            raise Refused(
+                "в %s нет %s — файл правила добавляет сам MR, правилом репо он станет только после мержа.\n"
+                "Сошлись на правило из %s или оформи находку формой drift с названным соседом."
+                % (rev, rel, rev))
+        source = "%s:%s" % (rev, rel)
+    else:
+        text = None
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        source = rel
+    if text is None:
         raise Refused("файла правила нет: %s. Ссылаться можно только на правило, которое есть в репо." % path)
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        lines = fh.read().splitlines()
+    lines = text.splitlines()
     if not 1 <= a <= b <= len(lines) or b - a > 30:
         raise Refused("строк %d-%d в %s нет (в файле %d строк) или диапазон длиннее 30 строк."
-                      % (a, b, m.group("path"), len(lines)))
+                      % (a, b, source, len(lines))
+                      + ("\nСтроки считаются по цели мержа: git show %s" % source if target else ""))
     quote = " ".join(l.strip() for l in lines[a - 1:b] if l.strip())
     if not quote:
         raise Refused("в %s пусто — процитировать нечего." % rule)
@@ -244,8 +310,11 @@ def check_shape(args):
                       % (OUTPUT_LINES, OUTPUT_WIDTH))
 
 
-def validate(args):
-    """Return a finding dict, or raise Refused with what is missing and why it matters."""
+def validate(args, target=None):
+    """Return a finding dict, or raise Refused with what is missing and why it matters.
+
+    `target` is the branch the MR merges into: a `rule` finding quotes the rule from there.
+    """
     if args.form not in CLAIM_FORMS:
         raise Refused(
             "неизвестная форма утверждения %r.\n"
@@ -307,7 +376,7 @@ def validate(args):
             "«Так не принято» без строки правила — это вкус; со строкой — факт, который автор проверит.")
     if rule and args.form != "rule":
         raise Refused("--rule — основание только для формы rule; для остальных — evidence или sibling.")
-    rule_quote = read_rule(args.dir, rule) if rule else None
+    rule_quote = read_rule(args.dir, rule, target) if rule else None
 
     verdict = ASSUMED if args.assumption else CONFIRMED
 
@@ -341,6 +410,8 @@ def validate(args):
 
     # severity vs the ladder
     cap_rank = RUNGS[args.rung][1]
+    if args.form in STATIC_FORMS and args.rung >= 1:
+        cap_rank = SEVERITIES["blocking"]["rank"]
     want_rank = SEVERITIES[args.severity]["rank"]
     if want_rank > cap_rank:
         allowed = [k for k, v in SEVERITIES.items() if v["rank"] <= cap_rank]
@@ -385,9 +456,8 @@ def validate(args):
 
 def render_comment(f):
     """The inline comment exactly as SKILL.md specifies it."""
-    sev = SEVERITIES[f["severity"]]
-    head = "**[ai-review-bot]** · Приоритет: %s · Блокирующее: %s · %s" % (
-        sev["prio"], sev["blocks"], f["verdict"],
+    head = "%s · %s · %s · %s" % (
+        BOT, KINDS[f["form"]][1], SEVERITIES[f["severity"]]["weight"], f["verdict"],
     )
     breaks = f["breaks_when"].replace("->", "→")
     parts = [head, "", f["claim"], "", "**Ломается при:** %s" % breaks]
@@ -411,23 +481,40 @@ def render_comment(f):
     return "\n".join(parts)
 
 
+def render_fyi(n):
+    """A note for the author: no verdict, no fix — nothing to act on, so it is posted resolved."""
+    return "\n".join([FYI_HEAD, "", n["text"], "", "**Источник:** %s" % n["source"]])
+
+
+def published(state):
+    """Everything the posting script may publish, in order: findings, then notes for the author.
+
+    One dict per comment: location, kind, severity, verdict, body and `resolve` — whether the
+    thread is closed right after posting (notes: an open thread would hold the merge).
+    """
+    order = {"blocking": 0, "important": 1, "nit": 2}
+    out = [{"location": f["location"], "kind": KINDS[f["form"]][0], "severity": f["severity"],
+            "verdict": f["verdict"], "body": render_comment(f), "resolve": False}
+           for f in sorted(state["findings"], key=lambda x: order[x["severity"]])]
+    out += [{"location": n["location"], "kind": "note", "severity": "note", "verdict": "",
+             "body": render_fyi(n), "resolve": True} for n in state.get("fyi", [])]
+    return out
+
+
 def render_all(state, as_json=False):
-    findings = state["findings"]
+    comments = published(state)
     if as_json:
-        return json.dumps(
-            [{"location": f["location"], "severity": f["severity"],
-              "verdict": f["verdict"], "body": render_comment(f)} for f in findings],
-            ensure_ascii=False, indent=2,
-        )
-    if not findings:
+        return json.dumps([{k: c[k] for k in ("location", "kind", "severity", "verdict", "body")}
+                           for c in comments], ensure_ascii=False, indent=2)
+    if not comments:
         return "Ни одной находки не прошло шлюз. Это нормальный исход — значит, ревью не нашло того,\nчто пережило бы проверку."
     out = []
-    order = {"blocking": 0, "important": 1, "nit": 2}
-    for n, f in enumerate(sorted(findings, key=lambda x: order[x["severity"]]), 1):
+    for n, c in enumerate(comments, 1):
+        icon = SEVERITIES[c["severity"]]["icon"] if c["severity"] in SEVERITIES else "💬"
         out.append("─" * 72)
-        out.append("#%d  %s  %s" % (n, SEVERITIES[f["severity"]]["icon"], f["location"]))
+        out.append("#%d  %s  %s" % (n, icon, c["location"]))
         out.append("─" * 72)
-        out.append(render_comment(f))
+        out.append(c["body"])
         out.append("")
     return "\n".join(out)
 
@@ -459,6 +546,10 @@ def render_notes(state):
                 f["verdict"], f["rung"]))
     else:
         L.append("_пусто_")
+
+    fyi = state.get("fyi", [])
+    L += ["", "## Заметки для автора (%d из %d)" % (len(fyi), FYI_LIMIT), ""]
+    L += ["- `%s` — %s (источник: %s)" % (n["location"], n["text"], n["source"]) for n in fyi] or ["_пусто_"]
 
     L += ["", "## Предполагается", ""]
     if assumed:
@@ -583,7 +674,8 @@ def cmd_init(args):
         shutil.move(state_path(root), archived)
         print("прошлое ревью убрано в %s" % archived)
     state = blank_state()
-    state["target"] = args.target
+    # the plan falls back to origin/HEAD; the rule form must read from the same branch
+    state["target"] = args.target or review_plan.default_target(review_plan.Path(root).resolve()) or None
     state["pr"] = args.pr
     state["head"] = git_head(root)
     state["mode"] = args.mode
@@ -604,7 +696,7 @@ def cmd_init(args):
 
 def cmd_add(args):
     state = load_state(args.dir)
-    finding = validate(args)
+    finding = validate(args, state.get("target"))
     state["findings"].append(finding)
     save_state(args.dir, state)
     write_notes(args.dir, state)
@@ -669,6 +761,11 @@ def cmd_plan(args):
 
 
 def cmd_note(args):
+    if QUESTION_LIKE.search(args.text):
+        raise Refused(
+            "это вопрос автору — в сводке ревью он до автора не дойдёт. Задай его в MR:\n"
+            "  gitlab_comment.py post --question --mr <group/project!iid> --file <путь> --line <N> \\\n"
+            "    --body \"%s\n\n<вопрос>\"" % QUESTION_HEAD)
     state = load_state(args.dir)
     state["notes"].append(args.text)
     save_state(args.dir, state)
@@ -717,6 +814,33 @@ def cmd_req(args):
     return 0
 
 
+def cmd_fyi(args):
+    """A note for the author: worth knowing, nothing to fix. It needs a source and stays short."""
+    state = load_state(args.dir)
+    fyi = state.setdefault("fyi", [])
+    text, source = (args.text or "").strip(), (args.source or "").strip()
+    if not LOCATION_RE.match(args.location or ""):
+        raise Refused("--location должен указывать строку диффа: path/File.ts:64, получено %r" % args.location)
+    if not text or looks_like_placeholder(text):
+        raise Refused("--text пустой или заглушка.")
+    if len(text) > FYI_WIDTH:
+        raise Refused("заметка длиннее %d символов — оставь суть, детали в сводку (finding.py note)." % FYI_WIDTH)
+    if not source:
+        raise Refused("заметка без источника — это впечатление. --source: тикет, MR, файл:строка или ссылка.")
+    if QUESTION_LIKE.search(text) or text.endswith("?"):
+        raise Refused("это вопрос, а не заметка: gitlab_comment.py post --question (шапка «%s»)." % QUESTION_HEAD)
+    if CONFIRMED in text or ASSUMED in text or "Ломается при" in text or "Что сделать" in text:
+        raise Refused("если по заметке нужно действие — это замечание: finding.py add с формой и проверкой.")
+    if len(fyi) >= FYI_LIMIT:
+        raise Refused("заметок для автора уже %d — оставь самые важные, остальное в сводку (finding.py note)."
+                      % FYI_LIMIT)
+    fyi.append({"location": args.location, "text": text, "source": source})
+    save_state(args.dir, state)
+    write_notes(args.dir, state)
+    print("заметка для автора %d/%d: %s" % (len(fyi), FYI_LIMIT, args.location))
+    return 0
+
+
 def cmd_render(args):
     state = load_state(args.dir)
     if args.no_inventory:
@@ -751,7 +875,9 @@ def cmd_render(args):
     if head_then and head_now and head_then != head_now:
         print(
             "ВНИМАНИЕ: находки записаны на HEAD %s, сейчас HEAD %s — номера строк могли съехать.\n"
-            "Перепроверь --location каждой находки по текущему диффу перед постингом."
+            "Перепроверь --location каждой находки по текущему диффу и запиши это:\n"
+            "  finding.py rehead --why \"<что перепроверено>\"\n"
+            "gitlab_comment.py сверяет head MR с HEAD ревью и откажет, пока они расходятся."
             % (head_then, head_now),
             file=sys.stderr)
     nits = [f for f in state["findings"] if f["severity"] == "nit"]
@@ -761,6 +887,29 @@ def cmd_render(args):
         print("ещё %d nit не идут в MR (лимит режима — %d): они остаются в REVIEW-NOTES."
               % (len(dropped), mode["max_nits"]), file=sys.stderr)
     print(render_all(state, as_json=args.json))
+    return 0
+
+
+def cmd_rehead(args):
+    """Move the review to the current HEAD — only after every finding was re-checked on it."""
+    state = load_state(args.dir)
+    head = git_head(args.dir)
+    if not head:
+        raise Refused("HEAD не определяется — rehead работает только в git-репозитории под ревью.")
+    if head == state.get("head"):
+        print("ревью уже на HEAD %s — переносить нечего." % head)
+        return 0
+    why = (args.why or "").strip()
+    if len(why) < 10:
+        raise Refused(
+            "--why должен сказать, что перепроверено на новом коде, например:\n"
+            "  --why \"перепроверил 3 находки на %s: строки не съехали, все воспроизводятся\"\n"
+            "Без этого комментарии лягут на строки кода, который никто не проверял." % head)
+    state["notes"].append("Ревью перенесено с %s на %s: %s" % (state.get("head") or "?", head, why))
+    state["head"] = head
+    save_state(args.dir, state)
+    write_notes(args.dir, state)
+    print("ревью теперь на HEAD %s" % head)
     return 0
 
 
@@ -842,6 +991,12 @@ def build_parser():
     q.add_argument("--done", type=int, metavar="N")
     q.set_defaults(func=cmd_plan)
 
+    q = sub.add_parser("fyi", help="a note for the author: worth knowing, nothing to fix")
+    q.add_argument("--location", required=True, help="path/File.ts:64 — a line of the diff")
+    q.add_argument("--text", required=True)
+    q.add_argument("--source", required=True, help="ticket, MR, file:line or link it rests on")
+    q.set_defaults(func=cmd_fyi)
+
     q = sub.add_parser("note", help="free-form line for the notes page")
     q.add_argument("text")
     q.set_defaults(func=cmd_note)
@@ -854,6 +1009,10 @@ def build_parser():
     q.add_argument("--no-ticket", metavar="WHY",
                    help="business mode without a ticket; the reason goes into the Phase 4 block")
     q.set_defaults(func=cmd_render)
+
+    q = sub.add_parser("rehead", help="move the review to the current HEAD after re-checking every finding")
+    q.add_argument("--why", required=True, help="what was re-checked on the new code")
+    q.set_defaults(func=cmd_rehead)
 
     q = sub.add_parser("stats", help="the Phase 4 coverage block")
     q.set_defaults(func=cmd_stats)

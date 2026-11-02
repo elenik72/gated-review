@@ -48,13 +48,13 @@ class PostGateTest(unittest.TestCase):
         return str(ctx.exception.code)
 
     def test_render_json_is_accepted_as_is(self):
-        [(file, line, old, body)] = gitlab_comment.gated(self.root, self.rendered())
-        self.assertEqual((file, line, old), ("src/MediaTable.tsx", 64, None))
+        [(file, line, old, body, resolve)] = gitlab_comment.gated(self.root, self.rendered())
+        self.assertEqual((file, line, old, resolve), ("src/MediaTable.tsx", 64, None, False))
         self.assertTrue(body.startswith("**[ai-review-bot]**"))
 
     def test_file_line_form_with_a_trailing_newline_is_accepted(self):
         body = self.rendered()[0]["body"] + "\n"
-        [(file, line, _, _)] = gitlab_comment.gated(
+        [(file, line, _, _, _)] = gitlab_comment.gated(
             self.root, [{"file": "src/MediaTable.tsx", "line": 64, "body": body}])
         self.assertEqual((file, line), ("src/MediaTable.tsx", 64))
 
@@ -81,8 +81,49 @@ class PostGateTest(unittest.TestCase):
             gitlab_comment.gated(tempfile.mkdtemp(), [{"location": "a.ts:1", "body": "x"}])
         self.assertIn("--question", str(ctx.exception.code))
 
+    def test_a_note_is_posted_and_resolved_a_finding_stays_open(self):
+        self.cli("fyi", "--location", "src/MediaTable.tsx:70", "--text",
+                 "Тот же список рендерит MediaGrid", "--source", "src/MediaGrid.tsx:12")
+        path = os.path.join(self.root, "out.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(self.rendered(), fh, ensure_ascii=False)
+        calls = []
+        posted = lambda h, p, i, r, f, l, b, old_line=None: {"file": f, "line": l, "thread": "t%d" % l, "note": 1}
+        with mock.patch.object(gitlab_comment, "diff_refs", return_value={}), \
+             mock.patch.object(gitlab_comment, "post_one", side_effect=posted), \
+             mock.patch.object(gitlab_comment, "api", side_effect=lambda *a, **k: calls.append(a[1])), \
+             contextlib.redirect_stdout(io.StringIO()):
+            gitlab_comment.cmd_post_batch(mock.Mock(mr="g/p!1", host="h", dir=self.root, input=path))
+        self.assertEqual(calls, ["projects/g%2Fp/merge_requests/1/discussions/t70"])
+
+    def post_batch_on(self, mr_head):
+        """post-batch the rendered findings against an MR whose head is `mr_head`; returns post_one."""
+        state = finding.load_state(self.root)
+        state["head"] = "abc1234"
+        finding.save_state(self.root, state)
+        path = os.path.join(self.root, "out.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(self.rendered(), fh, ensure_ascii=False)
+        posted = mock.Mock(return_value={"file": "f", "line": 1, "thread": "t", "note": 1})
+        with mock.patch.object(gitlab_comment, "diff_refs", return_value={"head_sha": mr_head}), \
+             mock.patch.object(gitlab_comment, "post_one", posted), \
+             contextlib.redirect_stdout(io.StringIO()):
+            gitlab_comment.cmd_post_batch(mock.Mock(mr="g/p!1", host="h", dir=self.root, input=path))
+        return posted
+
+    def test_nothing_is_posted_once_the_mr_moved_on(self):
+        with self.assertRaises(SystemExit) as ctx:
+            self.post_batch_on("fff0000000000000000000000000000000000000")
+        self.assertIn("rehead", str(ctx.exception.code))
+
+    def test_the_reviewed_head_is_posted(self):
+        self.assertEqual(self.post_batch_on("abc1234def0000000000000000000000000000000").call_count, 1)
+
+    def test_a_question_without_a_review_state_is_not_held(self):
+        gitlab_comment.check_head(tempfile.mkdtemp(), {"head_sha": "fff0000"})
+
     def test_a_question_passes_without_the_gate(self):
-        q = "**[ai-review-bot]** · Вопрос · Блокирующее: нет\n\nПочему здесь не используется общий хук?"
+        q = "**[ai-review-bot]** · ❓ Вопрос\n\nПочему здесь не используется общий хук?"
         self.assertEqual(gitlab_comment.question_body(q), q)
 
     def test_a_question_without_the_bot_header_is_refused(self):

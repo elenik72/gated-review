@@ -178,13 +178,14 @@ class RenderTest(unittest.TestCase):
         first = body.split("\n")[0]
         self.assertEqual(
             first,
-            "**[ai-review-bot]** · Приоритет: важно · Блокирующее: да · подтверждено",
+            "**[ai-review-bot]** · 🐞 Баг · блокирует мерж · подтверждено",
         )
 
     def test_nit_is_non_blocking(self):
         body = finding.render_comment(finding.validate(
             args(severity="nit", rung=1, evidence="git grep", output="2 hits")))
-        self.assertIn("Приоритет: не важно · Блокирующее: нет", body)
+        self.assertIn("· 🐞 Баг · не важно · подтверждено", body)
+        self.assertNotIn("блокирует", body)
 
     def test_evidence_output_is_carried_into_the_comment(self):
         body = finding.render_comment(finding.validate(args(output="1 failed | 12 passed")))
@@ -248,6 +249,85 @@ class StatsTest(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════
 # cli round-trip
 # ═══════════════════════════════════════════════════════════════
+
+class TypesAndNotesTest(unittest.TestCase):
+    """The type comes from the form; notes for the author are short, sourced and capped."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.cli("init")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def cli(self, *argv):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return finding.main(["--dir", self.root] + list(argv))
+
+    def fyi(self, text="MR !1972 удаляет этот же ключ, порядок мержа важен", source="!1972",
+            location="src/a.ts:12"):
+        return self.cli("fyi", "--location", location, "--text", text, "--source", source)
+
+    def collision(self, **over):
+        return args(form="collision", severity="important", rung=1,
+                    evidence="git grep -l row origin/b", output="src/b.scss", **over)
+
+    def test_every_form_has_a_type(self):
+        self.assertEqual(set(finding.KINDS), set(finding.CLAIM_FORMS))
+
+    def test_header_names_the_type_from_the_form(self):
+        body = finding.render_comment(finding.validate(self.collision()))
+        self.assertEqual(body.split("\n")[0],
+                         "**[ai-review-bot]** · 🔀 Коллизия · желательно · подтверждено")
+
+    def test_static_forms_may_block_on_reading_the_code(self):
+        f = finding.validate(args(form="collision", severity="blocking", rung=1,
+                                  evidence="git grep -l row origin/b", output="src/b.scss"))
+        self.assertEqual(f["severity"], "blocking")
+        with self.assertRaises(finding.Refused):  # behaviour still needs a test run
+            finding.validate(args(form="breaks", severity="blocking", rung=1,
+                                  evidence="git grep -n items", output="src/a.ts:3"))
+        with self.assertRaises(finding.Refused):  # reading the diff alone still caps
+            finding.validate(args(form="collision", severity="blocking", rung=0,
+                                  evidence="git diff", output="src/a.scss"))
+
+    def test_render_json_carries_the_type_notes_last(self):
+        self.cli("cover", "--add", "src/**")
+        self.assertEqual(self.cli(
+            "add", "--form", "collision", "--severity", "important", "--rung", "1",
+            "--claim", "класс .row объявлен и в ветке b",
+            "--breaks-when", "обе ветки в main -> таблица свёрстана чужими стилями",
+            "--location", "src/a.scss:3", "--evidence", "git grep -l row origin/b",
+            "--output", "src/b.scss"), 0)
+        self.assertEqual(self.fyi(), 0)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            finding.main(["--dir", self.root, "render", "--json"])
+        items = json.loads(out.getvalue())
+        self.assertEqual([i["kind"] for i in items], ["collision", "note"])
+        self.assertEqual((items[1]["severity"], items[1]["verdict"]), ("note", ""))
+        self.assertTrue(items[1]["body"].startswith(finding.FYI_HEAD))
+
+    def test_fyi_refuses_what_is_not_a_note(self):
+        for bad in (dict(source=""), dict(location="src/a.ts"), dict(text="x" * 300),
+                    dict(text="Стоит уточнить у автора, согласованы ли имена"),
+                    dict(text="Почему здесь не общий хук?"),
+                    dict(text="Ломается при пустом списке, белый экран")):
+            self.assertEqual(self.fyi(**bad), 2, bad)
+        for _ in range(finding.FYI_LIMIT):
+            self.assertEqual(self.fyi(), 0)
+        self.assertEqual(self.fyi(), 2)
+
+    def test_note_refuses_a_question_to_the_author(self):
+        self.assertEqual(self.cli("note", "Вопрос автору: пустая строка в eventVariables подставляется"), 2)
+        self.assertEqual(self.cli("note", "Тикет просил согласовать имена, стоит подтвердить в треде"), 2)
+        self.assertEqual(self.cli("note", "Вопрос аналитику о D-152 остаётся открытым"), 0)
+
+    def test_notes_page_lists_notes_for_the_author(self):
+        self.fyi()
+        page = open(os.path.join(self.root, finding.NOTES_FILE), encoding="utf-8").read()
+        self.assertIn("## Заметки для автора (1 из %d)" % finding.FYI_LIMIT, page)
+
 
 class HideFromGitTest(unittest.TestCase):
     """Review state must not end up in a commit of the repo under review."""
@@ -386,6 +466,23 @@ class CliTest(unittest.TestCase):
             finding.git_head = real
         self.assertIn("могли съехать", err.getvalue())
 
+    def test_rehead_needs_a_reason_and_moves_the_review(self):
+        self.run_cli("init")
+        state = finding.load_state(self.root)
+        state["head"] = "0000000"
+        finding.save_state(self.root, state)
+        real = finding.git_head
+        finding.git_head = lambda root: "1111111"
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(self.run_cli("rehead", "--why", "ок"), 2)
+            self.assertEqual(self.run_cli("rehead", "--why", "перепроверил 1 находку: строки не съехали"), 0)
+        finally:
+            finding.git_head = real
+        state = finding.load_state(self.root)
+        self.assertEqual(state["head"], "1111111")
+        self.assertIn("Ревью перенесено с 0000000 на 1111111", state["notes"][-1])
+
     def test_render_silent_when_head_unknown(self):
         # a state written by an older version has no "head" — no warning, no crash
         self.run_cli("init")
@@ -515,6 +612,72 @@ class ModesAndRequirementsTest(unittest.TestCase):
         with open(os.path.join(self.root, finding.NOTES_FILE), encoding="utf-8") as fh:
             self.assertIn("reference/python-fastapi.md", fh.read())
         self.assertEqual(self.cli("init", "--force", "--stack", "ruby")[0], 2)
+
+
+class RuleFromTargetTest(unittest.TestCase):
+    """The MR under review may edit AGENTS.md; it is judged by the rule its target branch has."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.git("init", "-q", "-b", "main")
+        self.write("AGENTS.md", "# Rules\n- Сервисы не импортируют роутеры.\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "base")
+        self.git("checkout", "-qb", "feature")
+        self.write("AGENTS.md", "# Rules\n- Сервисам можно всё.\n")
+        self.write("NEW.md", "# New\n- Новое правило из этого MR.\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "change the rules")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def git(self, *argv):
+        subprocess.run(["git", "-C", self.root, "-c", "user.email=t@t", "-c", "user.name=t", *argv],
+                       check=True, capture_output=True)
+
+    def write(self, name, text):
+        with open(os.path.join(self.root, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def add_rule(self, rule):
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = finding.main(["--dir", self.root, "add", "--form", "rule", "--severity", "nit",
+                                 "--rung", "1", "--claim", "сервис импортирует роутер",
+                                 "--breaks-when", "app/pay.py:3 импортирует app.api -> цикл импортов",
+                                 "--location", "app/pay.py:3", "--rule", rule])
+        return code, err.getvalue()
+
+    def init(self, target):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(finding.main(["--dir", self.root, "init", "--target", target]), 0)
+
+    def test_the_rule_is_quoted_from_the_target_branch(self):
+        self.init("main")
+        self.assertEqual(self.add_rule("AGENTS.md:2")[0], 0)
+        body = finding.render_comment(finding.load_state(self.root)["findings"][0])
+        self.assertIn("Сервисы не импортируют роутеры", body)
+        self.assertNotIn("можно всё", body)
+
+    def test_a_rule_the_mr_adds_is_not_a_rule_yet(self):
+        self.init("main")
+        code, err = self.add_rule("NEW.md:2")
+        self.assertEqual(code, 2)
+        self.assertIn("добавляет сам MR", err)
+
+    def test_init_without_a_target_reads_rules_from_the_plans_default(self):
+        self.git("update-ref", "refs/remotes/origin/main", "main")
+        self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(finding.main(["--dir", self.root, "init"]), 0)
+        self.assertEqual(finding.load_state(self.root)["target"], "origin/main")
+
+    def test_an_unreadable_target_is_refused(self):
+        self.init("nope")
+        code, err = self.add_rule("AGENTS.md:2")
+        self.assertEqual(code, 2)
+        self.assertIn("не читается", err)
 
 
 class ShapeTest(unittest.TestCase):
