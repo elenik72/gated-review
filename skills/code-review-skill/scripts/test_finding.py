@@ -719,5 +719,127 @@ class ShapeTest(unittest.TestCase):
         self.assertIn("**Что сделать:** один шаг строкой", finding.render_comment(f))
 
 
+# ═══════════════════════════════════════════════════════════════
+# what GitLab would act on, every changed file accounted for, taking a finding off
+# ═══════════════════════════════════════════════════════════════
+
+class UnsafeTextTest(unittest.TestCase):
+    def test_a_line_that_starts_with_a_slash_command_is_named(self):
+        self.assertIn("/approve", finding.unsafe("код читается так:\n/approve\nи всё"))
+        self.assertIn("/merge", finding.unsafe("```\nвывод\n```\n```\n  /merge when ready"))
+
+    def test_paths_and_comments_are_not_commands(self):
+        for text in ("/usr/bin/env python3", "// комментарий", "см. src/a.ts и /api/v1/users", "делим a / b"):
+            self.assertIsNone(finding.unsafe(text), text)
+
+    def test_a_mention_outside_code_is_named_and_inside_code_is_not(self):
+        self.assertIn("@all", finding.unsafe("нужно согласовать, @all"))
+        self.assertIn("@nestjs", finding.unsafe("обновлён @nestjs/axios"))
+        for text in ("декоратор `@Injectable()`", "```\n@media (max-width: 1px)\n```", "пишите на a@b.example"):
+            self.assertIsNone(finding.unsafe(text), text)
+
+    def test_the_gate_refuses_a_finding_gitlab_would_run(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            finding.main(["--dir", root, "init"])
+            code = finding.main([
+                "--dir", root, "add", "--form", "breaks", "--claim", "падает на пустом списке",
+                "--breaks-when", "items = [] -> белый экран вместо пустого состояния",
+                "--location", "src/MediaTable.tsx:64", "--severity", "nit", "--rung", "1",
+                "--evidence", "git grep", "--output", "/approve"])
+        self.assertEqual(code, 2)
+
+
+class ChangedFilesTest(unittest.TestCase):
+    """render wants every changed file in the inventory: looked at, or skipped out loud."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.email", "t@example.com")
+        self.git("config", "user.name", "T")
+        self.write("README.md")
+        self.git("commit", "-q", "-m", "base")
+        self.git("checkout", "-q", "-b", "feature")
+        self.write("src/a.ts", "src/b.ts", "spec/a.spec.ts", "yarn.lock")
+        self.git("commit", "-q", "-m", "change")
+        self.cli("init", "--target", "main")
+
+    def git(self, *argv):
+        subprocess.run(["git", "-C", self.root, *argv], check=True, capture_output=True)
+
+    def write(self, *names):
+        for name in names:
+            path = os.path.join(self.root, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(name + "\n")
+        self.git("add", ".")
+
+    def cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = finding.main(["--dir", self.root] + list(argv))
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_changed_file_outside_the_inventory_stops_render(self):
+        self.cli("cover", "--add", "src/a.ts")
+        code, said = self.cli("render")
+        self.assertEqual(code, 2)
+        self.assertIn("src/b.ts", said)
+        self.assertIn("spec/a.spec.ts", said)
+        self.assertNotIn("yarn.lock", said)  # generated: nobody reads it
+
+    def test_a_glob_a_directory_and_a_skip_all_account_for_files(self):
+        self.cli("cover", "--add", "src/*.ts")
+        self.cli("cover", "--skip", "spec/", "--why", "тесты не смотрел")
+        code, said = self.cli("render")
+        self.assertEqual(code, 0, said)
+        with open(os.path.join(self.root, finding.NOTES_FILE), encoding="utf-8") as page:
+            self.assertIn("тесты не смотрел", page.read())
+
+    def test_one_part_of_a_review_in_parts_may_leave_the_rest(self):
+        self.cli("cover", "--add", "src/a.ts")
+        self.assertEqual(self.cli("render", "--part", "первый коммит")[0], 0)
+        self.assertEqual(self.cli("render")[0], 2)
+
+    def test_done_clears_the_reason_a_file_was_skipped_for(self):
+        self.cli("cover", "--skip", "src/a.ts", "--why", "позже")
+        _, said = self.cli("cover", "--done", "src/a.ts")
+        self.assertIn("[x] src/a.ts\n", said)
+
+
+class DropTest(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.cli("init")
+        self.cli("add", "--form", "breaks", "--claim", "падает на пустом списке",
+                 "--breaks-when", "items = [] -> белый экран вместо пустого состояния",
+                 "--location", "src/MediaTable.tsx:64", "--severity", "nit", "--rung", "1",
+                 "--evidence", "git grep", "--output", "2 вызова")
+
+    def cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = finding.main(["--dir", self.root] + list(argv))
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_dropped_finding_leaves_the_comments_and_stays_on_the_notes_page(self):
+        code, _ = self.cli("drop", "--location", "src/MediaTable.tsx:64", "--why", "повтор находки на строке 12")
+        self.assertEqual(code, 0)
+        state = finding.load_state(self.root)
+        self.assertEqual(state["findings"], [])
+        self.assertEqual(state["dropped"][0]["why"], "повтор находки на строке 12")
+        with open(os.path.join(self.root, finding.NOTES_FILE), encoding="utf-8") as page:
+            self.assertIn("Снято: повтор находки на строке 12", page.read())
+
+    def test_dropping_needs_a_reason_and_an_existing_finding(self):
+        self.assertEqual(self.cli("drop", "--location", "src/Other.tsx:1", "--why", "повтор")[0], 2)
+        self.assertEqual(self.cli("drop", "--location", "src/MediaTable.tsx:64", "--why", " ")[0], 2)
+
+
 if __name__ == '__main__':
     unittest.main()

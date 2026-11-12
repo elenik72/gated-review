@@ -39,8 +39,12 @@ When review findings are posted to a pull/merge request:
   by `finding.py fyi --location <path:line> --source <ticket | MR | path:line> --text "…"`:
   worth knowing, nothing to fix (merge order with a sibling MR, a ticket that contradicts the
   docs, debt outside this MR). It needs a source, stays under 240 characters, carries no verdict
-  and no fix, at most 3 per MR; `post-batch` posts it with the findings and closes its thread at
-  once, so it never holds a merge that requires resolved threads.
+  and no fix, at most 3 per MR. `post-batch` posts the notes with the findings, but not as
+  threads: all of them go into **one ordinary MR comment**, each under a link to its line. A
+  thread fails either way — open, it holds the merge wherever the project requires every thread
+  resolved, and nobody but the reviewer closes it; closed at posting, it is folded away before
+  the author reads it. A plain comment stays on the Overview and holds nothing. `threads` lists
+  it as `comment`: there is nothing to re-check or resolve.
 - **The body is built by `finding.py render`, in this order:** the claim in one
   sentence → «Ломается при» with one scenario → «Что сделать» as up to three
   steps (a list when there is more than one) → the sibling / rule / assumption
@@ -109,7 +113,7 @@ login. The host is taken from `origin` of the repo under review; `GITLAB_HOST` o
 `--host` override it.
 
 **Verify before reporting done.** After posting, run `threads` once and confirm every
-finding shows as `DiffNote` with a file and line. Reporting a review as posted when the
+finding shows as `DiffNote` with a file and line (the notes for the author: one `comment` row). Reporting a review as posted when the
 comments landed at page level is a false completion claim.
 
 ### Re-review after fixes (the loop)
@@ -130,3 +134,39 @@ files. Before re-reviewing after the author pushed fixes, list the existing
   the review ran on — GitLab anchors to the latest version, so the comment would land on
   code nobody checked. Re-verify each finding's `--location` against the current diff,
   then move the review: `finding.py rehead --why "<what was re-checked>"`.
+
+## Too long and scannable
+
+Too long (one finding carrying four):
+
+> Описание закрывает PAY-12 словом Closes, а её runtime-часть по Block 6 не сделана: карточка
+> по снимку Run и подпись события Failed (D-66). Сама PAY-12 говорит… **Что сделать:** заменить
+> Closes на Relates to. Остаток можно делать уже сейчас на devmock: 1) … 2) … Уже на месте: … ,
+> … , … . Отдельной истории запусков делать не нужно: … PAY-12 закрыть тем MR, который …
+
+Scannable — the same finding; the rest went to `note`, the two missing UI parts became
+two findings of their own:
+
+```text
+**[ai-review-bot]** · 📋 Требование · желательно · подтверждено
+
+`Closes PAY-12` закроет задачу при мерже, хотя её вторая часть — переключение на API — не сделана.
+
+**Ломается при:** мерж MR → GitLab закрывает PAY-12 → переключение на API остаётся без задачи.
+
+**Что сделать:**
+- заменить `Closes PAY-12` на `Relates to PAY-12`;
+- закрыть PAY-12 тем MR, который переключит экран на API.
+
+<details><summary>Как проверено</summary> … команда и 1–3 строки её вывода … </details>
+```
+
+## Plain forms
+
+- **If a technical term is truly unavoidable, explain it in plain words in
+  parentheses the first time it appears.** Examples of the plain form to use:
+  - "plausible bug" → "возможная проблема — механизм реальный, но воспроизвести на конкретных данных пока не доказано"
+  - "clamp the page number" → "ограничить номер страницы допустимым диапазоном (не больше числа страниц)"
+  - "stale state" → "устаревшее значение, оставшееся в состоянии компонента"
+  - "race condition" → "состояние гонки — два действия выполняются одновременно и мешают друг другу"
+  - "off-by-one" → "ошибка на единицу в границах (например, цикл заходит на один шаг дальше нужного)"

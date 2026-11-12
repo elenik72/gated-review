@@ -26,7 +26,7 @@ from pathlib import Path
 MODES = {
     "full": {
         "title": "полное ревью: логика, требования, дизайн, безопасность, производительность",
-        "refs": ["reference/architecture-review-guide.md", "reference/code-quality-universal.md",
+        "refs": ["reference/review-process.md", "reference/architecture-review-guide.md", "reference/code-quality-universal.md",
                  "reference/security-review-guide.md", "reference/performance-review-guide.md"],
         "forms": "все формы; требования тикета — таблица в Phase 4",
         "max_nits": 5,
@@ -34,14 +34,14 @@ MODES = {
     },
     "business": {
         "title": "бизнес-логика: реализовано ли то, что требует тикет, и правильно ли",
-        "refs": ["reference/business-logic-review.md"],
+        "refs": ["reference/review-process.md", "reference/business-logic-review.md"],
         "forms": "unimplemented, breaks, invariant, unrequested",
         "max_nits": 0,
         "needs_requirements": True,
     },
     "design": {
         "title": "стайлгайд, архитектура и дизайн кода по правилам самого репо",
-        "refs": ["reference/design-review.md", "reference/architecture-review-guide.md",
+        "refs": ["reference/review-process.md", "reference/design-review.md", "reference/architecture-review-guide.md",
                  "reference/code-quality-universal.md"],
         "forms": "rule, drift, unread, invariant",
         "max_nits": 5,
@@ -49,7 +49,7 @@ MODES = {
     },
     "security": {
         "title": "безопасность: инъекции, доступ, секреты, небезопасные API",
-        "refs": ["reference/security-review-guide.md", "reference/cross-cutting/sql-injection-prevention.md",
+        "refs": ["reference/review-process.md", "reference/security-review-guide.md", "reference/cross-cutting/sql-injection-prevention.md",
                  "reference/cross-cutting/xss-prevention.md"],
         "forms": "breaks, invariant",
         "max_nits": 0,
@@ -341,11 +341,38 @@ def build(root, mode, stacks, target, write_lists=False):
     lines.append(f"Фокус форм: {m['forms']}")
     lines.append(f"В MR не больше {m['max_nits']} nit; остальные — только в REVIEW-NOTES" if m["max_nits"]
                  else "nit в MR не идут — только в REVIEW-NOTES")
+    lines += by_commit(root, target)
     if m["needs_requirements"]:
         lines.append("Гейт: render откажет без требований тикета — finding.py req --add \"<цитата>\"")
     if found and write_lists:
         write_file_lists(root, {s: e for s, e in found.items() if s in chosen})
     return "\n".join(lines), chosen
+
+
+LARGE = 30  # changed files; past this one pass opens ever fewer of them (measured on 131 reviews)
+
+
+def by_commit(root, target):
+    """The plan's lines for a large MR: review it commit by commit, then link the commits."""
+    files = set(changed_files(root, target))
+    if len(files) <= LARGE:
+        return []
+    base = target if git(root, "rev-parse", "--verify", "--quiet", target) else "origin/" + target
+    lines = [f"MR крупный: {len(files)} файлов. За один проход открывается тем меньше файлов, чем их больше, "
+             "поэтому иди по коммитам:"]
+    for row in git(root, "log", "--reverse", "--no-merges", "--format=%h%x09%s", f"{base}..HEAD").splitlines()[:20]:
+        commit, _, subject = row.partition("\t")
+        own = [f for f in git(root, "show", "--name-only", "--format=", commit).splitlines() if f in files]
+        lines.append(f"  {commit}  {len(own):>3} файлов  {subject[:70]}")
+    lines += [
+        "  по каждому коммиту: git show <коммит> -- <файл> — что изменено; сам файл читай в итоговом виде;",
+        "  все его файлы — в инвентарь (finding.py cover --add, --done после чтения); коммит крупнее "
+        f"{LARGE} файлов дели по каталогам;",
+        "  после коммита: finding.py render --part \"<коммит>\"; что видно только между коммитами — в note со словом LINK;",
+        "  в конце свяжи: требования тикета по всему MR, файлы из нескольких коммитов, порядок раскатки, "
+        "параллельные MR; повтор или опровергнутую находку сними — finding.py drop.",
+    ]
+    return lines
 
 
 def main(argv=None):

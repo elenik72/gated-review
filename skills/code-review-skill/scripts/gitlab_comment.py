@@ -13,7 +13,7 @@ Usage:
     gitlab_comment.py post --mr group/project!69 \
         --file docs/rfc/foo.md --line 171 --body-file /tmp/finding1.md
 
-    # all findings at once, straight from the gate
+    # all findings at once, straight from the gate; notes for the author go into one MR comment
     finding.py render --json > /tmp/findings.json
     gitlab_comment.py post-batch --mr group/project!69 --input /tmp/findings.json
 
@@ -23,14 +23,21 @@ Usage:
     # list existing [ai-review-bot] threads (the re-review work list)
     gitlab_comment.py threads --mr group/project!69 [--all]
 
-    # reply into a thread / resolve it / delete a note
+    # reply into a thread / resolve it (or open it again) / delete a note
     gitlab_comment.py reply --mr group/project!69 --thread <id> --body-file /tmp/r.md
-    gitlab_comment.py resolve --mr group/project!69 --thread <id>
+    gitlab_comment.py resolve --mr group/project!69 --thread <id> [--reopen]
     gitlab_comment.py delete --mr group/project!69 --note <note_id>
 
 Every `post` verifies the result: if GitLab came back with anything other than a
 `DiffNote` carrying the requested line, the script deletes the note it just made
 and exits non-zero, so a review can never quietly end up with page-level comments.
+A line the change kept (context next to an edit) is anchored by its old number too, looked up
+in the MR's diff: GitLab refuses it with the new number alone (`line_code can't be blank`).
+
+Notes for the author (`finding.py fyi`) are the one exception to "inline": they ask for no fix,
+so they go into one ordinary MR comment with a link to each line. A thread, open, holds the
+merge where the project requires every thread resolved; closed at posting, it is folded away
+before the author reads it. A comment that is not a thread does neither.
 
 `post` and `post-batch` publish only findings that passed `finding.py`: each body must be
 exactly what `finding.py render` produces for a finding at that location in `.review/`
@@ -51,8 +58,10 @@ GITLAB_TOKEN / GL_TOKEN.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -108,6 +117,9 @@ def token(host: str) -> str:
 
 def api(host: str, path: str, *, method: str = "GET", payload: dict | None = None):
     url = f"https://{host}/api/v4/{path.lstrip('/')}"
+    why = finding.unsafe(str(payload["body"])) if payload and "body" in payload else None
+    if why:  # the last door: a reply or a question never went through `finding.py add`
+        sys.exit("NOT posted — " + why)
     data = json.dumps(payload).encode() if payload is not None else None
     headers = {"PRIVATE-TOKEN": token(host)}
     if data is not None:
@@ -142,11 +154,51 @@ def diff_refs(host: str, project: str, iid: str) -> dict:
     }
 
 
-def position(refs: dict, file: str, line: int, *, old_line: int | None = None) -> dict:
+@functools.lru_cache(maxsize=None)
+def file_diffs(host: str, project: str, iid: str, head_sha: str) -> dict:
+    """new path -> its diff in the MR version at `head_sha`, the one comments anchor to."""
+    for v in api(host, f"projects/{project}/merge_requests/{iid}/versions") or []:
+        if v["head_commit_sha"] == head_sha:
+            detail = api(host, f"projects/{project}/merge_requests/{iid}/versions/{v['id']}")
+            return {d["new_path"]: d for d in detail.get("diffs") or []}
+    return {}
+
+
+HUNK = re.compile(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def old_line_of(diff: str, line: int) -> int | None:
+    """Where new line `line` stood in the old file when the change left it as it was (GitLab
+    anchors a comment there only by both numbers: `line_code can't be blank` with the new one
+    alone), or None when the change added it."""
+    old = new = shift = 0  # shift: old minus new number of the unchanged lines read so far
+    for row in diff.splitlines():
+        hunk = HUNK.match(row)
+        if hunk:
+            old, new = int(hunk[1]), int(hunk[2])
+            if line < new:
+                break  # between two hunks
+        elif new and not row.startswith("\\"):  # "\ No newline at end of file"
+            if row.startswith("+"):
+                if new == line:
+                    return None
+                new += 1
+            elif row.startswith("-"):
+                old += 1
+            else:
+                if new == line:
+                    return old
+                old, new = old + 1, new + 1
+            shift = old - new
+    return line + shift
+
+
+def position(refs: dict, file: str, line: int, *, old_line: int | None = None,
+             old_path: str | None = None) -> dict:
     pos = {
         "position_type": "text",
         "new_path": file,
-        "old_path": file,
+        "old_path": old_path or file,
         "new_line": line,
         **refs,
     }
@@ -158,7 +210,14 @@ def position(refs: dict, file: str, line: int, *, old_line: int | None = None) -
 
 
 def post_one(host, project, iid, refs, file, line, body, *, old_line=None) -> dict:
-    payload = {"body": body, "position": position(refs, file, line, old_line=old_line)}
+    old_path = file
+    if line is not None and old_line is None:  # a line the change kept needs its old number too
+        entry = file_diffs(host, project, iid, refs.get("head_sha", "")).get(file) or {}
+        old_path = entry.get("old_path") or file
+        if entry.get("diff"):
+            old_line = old_line_of(entry["diff"], line)
+    payload = {"body": body,
+               "position": position(refs, file, line, old_line=old_line, old_path=old_path)}
     disc = api(
         host,
         f"projects/{project}/merge_requests/{iid}/discussions",
@@ -181,11 +240,48 @@ def post_one(host, project, iid, refs, file, line, body, *, old_line=None) -> di
     return {"thread": disc["id"], "note": note["id"], "file": file, "line": line}
 
 
-def gated(review_dir: str, items: list[dict]) -> list[tuple]:
-    """Only what passed the gate may be posted: (file, line, old_line, body, resolve) per item.
+NOTES_LEAD = "К сведению, исправлять ничего не нужно. Это обычный комментарий, а не тред: merge он не держит."
 
-    `resolve` comes from the review state, not from the item: a note for the author is closed
-    right after posting, a finding stays open.
+
+def is_note(body: str) -> bool:
+    """A note for the author, as `finding.py render` wrote it: it starts with its own header."""
+    return body.lstrip().startswith(finding.FYI_HEAD)
+
+
+def note_link(host: str, path: str, refs: dict, file: str, line, old_line) -> str:
+    """`file:line` as a link to that line at the reviewed commit (a removed line: at the base)."""
+    num = line if line is not None else old_line
+    sha = refs.get("head_sha") if line is not None else refs.get("base_sha")
+    where = f"`{file}:{num}`"
+    if not sha:
+        return where
+    return f"[{where}](https://{host}/{path}/-/blob/{sha}/{urllib.parse.quote(file)}#L{num})"
+
+
+def notes_comment(host: str, path: str, refs: dict, notes: list[tuple]) -> str:
+    """One comment for every note of the review: the header once, then each note under its line."""
+    parts = [finding.FYI_HEAD, "", NOTES_LEAD]
+    for file, line, old, body in notes:
+        text = body.strip().split("\n", 1)[-1].strip()  # the note without its own header
+        parts += ["", "---", "", note_link(host, path, refs, file, line, old), "", text]
+    return "\n".join(parts)
+
+
+def post_notes(host, project, iid, mr, refs, notes) -> None:
+    """Notes for the author as one ordinary MR comment: read on the Overview, never a thread."""
+    path = mr.rsplit("!", 1)[0]
+    note = api(host, f"projects/{project}/merge_requests/{iid}/notes", method="POST",
+               payload={"body": notes_comment(host, path, refs, notes)})
+    if note.get("resolvable") or note.get("type") == "DiffNote":
+        api(host, f"projects/{project}/merge_requests/{iid}/notes/{note['id']}", method="DELETE")
+        sys.exit("NOT a plain comment: GitLab made the notes for the author a thread, and an open "
+                 "thread holds the merge — comment deleted.")
+    for file, line, old, _ in notes:
+        print(f"note ok  {file}:{line if line is not None else old}  comment={note['id']}")
+
+
+def gated(review_dir: str, items: list[dict]) -> list[tuple]:
+    """Only what passed the gate may be posted: (file, line, old_line, body) per item.
 
     An item is either a `finding.py render --json` row ({"location", "body"}, optional
     "old_line") or {"file", "line"|"old_line", "body"|"body_file"}. Its body must equal
@@ -197,7 +293,7 @@ def gated(review_dir: str, items: list[dict]) -> list[tuple]:
     except finding.Refused as exc:
         sys.exit(f"REFUSED: {exc}\nOnly findings that passed finding.py are posted; "
                  "a question to the author — post --question.")
-    allowed = {(c["location"], c["body"].rstrip("\n")): c["resolve"] for c in finding.published(state)}
+    allowed = {(c["location"], c["body"].rstrip("\n")) for c in finding.published(state)}
     out, bad = [], []
     for item in items:
         body = item.get("body")
@@ -214,7 +310,7 @@ def gated(review_dir: str, items: list[dict]) -> list[tuple]:
         key = (location, body.rstrip("\n"))
         if key not in allowed:
             bad.append(location)
-        out.append((file, line, old, body, allowed.get(key, False)))
+        out.append((file, line, old, body))
     if bad:
         sys.exit("REFUSED: not a finding that passed finding.py (its text or line differs): "
                  + ", ".join(bad) + "\nRecord it with `finding.py add` and post the output of "
@@ -262,16 +358,17 @@ def cmd_post(args):
     project, iid = parse_mr(args.mr)
     body = args.body if args.body else open(args.body_file, encoding="utf-8").read()
     if args.question:
-        file, line, old, body, resolve = args.file, args.line, args.old_line, question_body(body), False
+        file, line, old, body = args.file, args.line, args.old_line, question_body(body)
     else:
-        [(file, line, old, body, resolve)] = gated(
+        [(file, line, old, body)] = gated(
             args.dir, [{"file": args.file, "line": args.line, "old_line": args.old_line, "body": body}])
     refs = diff_refs(args.host, project, iid)
     check_head(args.dir, refs)
+    if not args.question and is_note(body):
+        post_notes(args.host, project, iid, args.mr, refs, [(file, line, old, body)])
+        return
     res = post_one(args.host, project, iid, refs, file, line, body, old_line=old)
     print(f"inline ok  {res['file']}:{res['line']}  thread={res['thread']} note={res['note']}")
-    if resolve:
-        resolve_thread(args.host, project, iid, res["thread"])
 
 
 def cmd_post_batch(args):
@@ -279,11 +376,14 @@ def cmd_post_batch(args):
     items = gated(args.dir, json.load(open(args.input, encoding="utf-8")))
     refs = diff_refs(args.host, project, iid)
     check_head(args.dir, refs)
-    for file, line, old, body, resolve in items:
+    notes = [item for item in items if is_note(item[3])]
+    for file, line, old, body in items:
+        if is_note(body):
+            continue
         res = post_one(args.host, project, iid, refs, file, line, body, old_line=old)
         print(f"inline ok  {res['file']}:{res['line']}  thread={res['thread']} note={res['note']}")
-        if resolve:
-            resolve_thread(args.host, project, iid, res["thread"])
+    if notes:  # after the findings: a batch that stopped half way has not posted them
+        post_notes(args.host, project, iid, args.mr, refs, notes)
 
 
 def cmd_threads(args):
@@ -303,7 +403,9 @@ def cmd_threads(args):
                 continue
             pos = note.get("position") or {}
             where = f"{pos.get('new_path')}:{pos.get('new_line')}" if pos else "MR-level"
-            state = "resolved" if note.get("resolved") else "open"
+            # a plain comment (the notes for the author) is not a thread: nothing to re-check or close
+            state = ("resolved" if note.get("resolved")
+                     else "open" if note.get("resolvable", True) else "comment")
             kind = note.get("type") or "Note"
             print(f"{d['id'][:12]}  {state:8} {kind:9} {where}")
             print(f"    {note['body'].splitlines()[0][:100]}")
@@ -325,16 +427,16 @@ def cmd_reply(args):
     print(f"replied in {args.thread} note={note['id']}")
 
 
-def resolve_thread(host, project, iid, thread):
-    """A note for the author needs no answer: closed at once, it does not hold the merge."""
+def resolve_thread(host, project, iid, thread, resolved=True):
+    """Close a thread, or open it again."""
     api(host, f"projects/{project}/merge_requests/{iid}/discussions/{thread}",
-        method="PUT", payload={"resolved": True})
-    print(f"resolved {thread}")
+        method="PUT", payload={"resolved": resolved})
+    print(f"{'resolved' if resolved else 'reopened'} {thread}")
 
 
 def cmd_resolve(args):
     project, iid = parse_mr(args.mr)
-    resolve_thread(args.host, project, iid, args.thread)
+    resolve_thread(args.host, project, iid, args.thread, resolved=not args.reopen)
 
 
 def cmd_delete(args):
@@ -368,7 +470,8 @@ def main():
                     help="a question to the author: claims nothing, so it skips the finding.py gate")
     sp.set_defaults(func=cmd_post)
 
-    sp = with_mr(sub.add_parser("post-batch", help="many inline comments from JSON"))
+    sp = with_mr(sub.add_parser(
+        "post-batch", help="findings inline, notes for the author in one MR comment, from JSON"))
     sp.add_argument("--input", required=True,
                     help='`finding.py render --json` output, or [{"file","line"|"old_line","body"|"body_file"}, ...]')
     sp.set_defaults(func=cmd_post_batch)
@@ -384,8 +487,9 @@ def main():
     g.add_argument("--body-file")
     sp.set_defaults(func=cmd_reply)
 
-    sp = with_mr(sub.add_parser("resolve", help="resolve a thread"))
+    sp = with_mr(sub.add_parser("resolve", help="resolve a thread (--reopen: open it again)"))
     sp.add_argument("--thread", required=True)
+    sp.add_argument("--reopen", action="store_true", help="open a resolved thread again")
     sp.set_defaults(func=cmd_resolve)
 
     sp = with_mr(sub.add_parser("delete", help="delete a note"))

@@ -140,6 +140,31 @@ def state_path(root):
     return os.path.join(root, STATE_DIR, STATE_FILE)
 
 
+# A comment is posted with the reviewer's own token. GitLab runs a line that starts with a
+# slash command as that person (/approve, /merge, /close) and notifies whoever an @name names.
+QUICK_ACTION = re.compile(r"(?m)^[ \t]*(/[A-Za-z_]+)(?=[ \t]|$)")
+MENTION = re.compile(r"(?<![\w`/.@])(@[A-Za-z0-9_][\w.-]*)")
+CODE_SPAN = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+GENERATED = re.compile(r"(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Gemfile\.lock|poetry\.lock|uv\.lock)$"
+                       r"|\.(snap|svg|png|jpe?g|gif|ico|woff2?|ttf|map|pdf)$|\.min\.js$|(^|/)__snapshots__/")
+
+
+def unsafe(text):
+    """Why GitLab would act on `text` instead of showing it; None when it is plain text.
+
+    A quick action counts on any line, inside a code block too: the block's own content can
+    close it. A mention counts outside code, where GitLab resolves it."""
+    hit = QUICK_ACTION.search(text)
+    if hit:
+        return ("строка начинается с «%s»: GitLab выполнит её как команду от имени того, кто публикует.\n"
+                "Начни строку с другого слова или убери её." % hit.group(1))
+    hit = MENTION.search(CODE_SPAN.sub("", text))
+    if hit:
+        return ("«%s» вне кода: GitLab уведомит этого человека или группу (а @all — весь проект).\n"
+                "Имя из кода возьми в обратные кавычки, человека назови без @." % hit.group(1))
+    return None
+
+
 def blank_state():
     return {
         "created": date.today().isoformat(),
@@ -155,6 +180,7 @@ def blank_state():
         "mode": "full",
         "stacks": [],
         "requirements": [],
+        "dropped": [],
     }
 
 
@@ -482,22 +508,24 @@ def render_comment(f):
 
 
 def render_fyi(n):
-    """A note for the author: no verdict, no fix — nothing to act on, so it is posted resolved."""
+    """A note for the author: no verdict, no fix. The posting script puts the notes of a review
+    into one ordinary MR comment: not a thread, so it is read and does not hold the merge."""
     return "\n".join([FYI_HEAD, "", n["text"], "", "**Источник:** %s" % n["source"]])
 
 
 def published(state):
     """Everything the posting script may publish, in order: findings, then notes for the author.
 
-    One dict per comment: location, kind, severity, verdict, body and `resolve` — whether the
-    thread is closed right after posting (notes: an open thread would hold the merge).
+    One dict per comment: location, kind, severity, verdict and body. A finding becomes a thread
+    on its line and stays open. Notes for the author become one plain MR comment: an open thread
+    held the merge, and one closed at posting was folded away unread.
     """
     order = {"blocking": 0, "important": 1, "nit": 2}
     out = [{"location": f["location"], "kind": KINDS[f["form"]][0], "severity": f["severity"],
-            "verdict": f["verdict"], "body": render_comment(f), "resolve": False}
+            "verdict": f["verdict"], "body": render_comment(f)}
            for f in sorted(state["findings"], key=lambda x: order[x["severity"]])]
     out += [{"location": n["location"], "kind": "note", "severity": "note", "verdict": "",
-             "body": render_fyi(n), "resolve": True} for n in state.get("fyi", [])]
+             "body": render_fyi(n)} for n in state.get("fyi", [])]
     return out
 
 
@@ -581,6 +609,11 @@ def render_notes(state):
             L.append("- [%s] %s" % ("x" if p["done"] else " ", p["text"]))
     else:
         L.append("_пусто_")
+
+    if state.get("dropped"):
+        L += ["", "## Сняты (в MR не идут)", ""]
+        L += ["- `%s` — %s. Снято: %s" % (d["finding"]["location"], d["finding"]["claim"], d["why"])
+              for d in state["dropped"]]
 
     if state["notes"]:
         L += ["", "## Заметки", ""] + ["- %s" % n for n in state["notes"]]
@@ -697,6 +730,9 @@ def cmd_init(args):
 def cmd_add(args):
     state = load_state(args.dir)
     finding = validate(args, state.get("target"))
+    why = unsafe(render_comment(finding))
+    if why:
+        raise Refused(why)
     state["findings"].append(finding)
     save_state(args.dir, state)
     write_notes(args.dir, state)
@@ -729,12 +765,13 @@ def cmd_cover(args):
             hit = [c for c in state["coverage"] if c["path"] == path]
             if not hit:
                 raise Refused("нет такого пункта покрытия: %s" % path)
-            hit[0]["done"] = True
+            hit[0]["done"], hit[0]["note"] = True, None
     if args.skip:
         for path in args.skip:
             hit = [c for c in state["coverage"] if c["path"] == path]
             if not hit:
-                raise Refused("нет такого пункта покрытия: %s" % path)
+                hit = [{"path": path, "done": False, "note": None}]
+                state["coverage"] += hit
             hit[0]["note"] = args.why or "не смотрел"
     save_state(args.dir, state)
     write_notes(args.dir, state)
@@ -831,6 +868,8 @@ def cmd_fyi(args):
         raise Refused("это вопрос, а не заметка: gitlab_comment.py post --question (шапка «%s»)." % QUESTION_HEAD)
     if CONFIRMED in text or ASSUMED in text or "Ломается при" in text or "Что сделать" in text:
         raise Refused("если по заметке нужно действие — это замечание: finding.py add с формой и проверкой.")
+    if unsafe(text + "\n" + source):
+        raise Refused(unsafe(text + "\n" + source))
     if len(fyi) >= FYI_LIMIT:
         raise Refused("заметок для автора уже %d — оставь самые важные, остальное в сводку (finding.py note)."
                       % FYI_LIMIT)
@@ -871,6 +910,16 @@ def cmd_render(args):
             "  finding.py cover --add <пути или glob'ы>   (потом --done / --skip по мере чтения)\n"
             "или, если инвентарь здесь не нужен, скажи почему — это попадёт в сводку:\n"
             "  finding.py render --no-inventory \"PR из двух файлов, прочитан целиком\"")
+    left = [] if args.part or state.get("no_inventory") else uncovered(args.dir, state)
+    if left:
+        raise Refused(
+            "в инвентаре покрытия нет %d изменённых файлов:\n  %s%s\n"
+            "Файл вне инвентаря остаётся непросмотренным молча. Внеси каждый:\n"
+            "  finding.py cover --add <пути или glob'ы>, потом --done по мере чтения,\n"
+            "  либо finding.py cover --skip <пути или glob'ы> --why \"<почему не смотрел>\".\n"
+            "Ревью идёт по частям и остальные файлы — в следующих частях:\n"
+            "  finding.py render --part \"<какая часть>\"   (последний render — без --part)"
+            % (len(left), "\n  ".join(left[:15]), "\n  …" if len(left) > 15 else ""))
     head_then, head_now = state.get("head"), git_head(args.dir)
     if head_then and head_now and head_then != head_now:
         print(
@@ -887,6 +936,40 @@ def cmd_render(args):
         print("ещё %d nit не идут в MR (лимит режима — %d): они остаются в REVIEW-NOTES."
               % (len(dropped), mode["max_nits"]), file=sys.stderr)
     print(render_all(state, as_json=args.json))
+    return 0
+
+
+def uncovered(root, state):
+    """Changed files no inventory entry names: an entry is a path, a glob, a directory, or a
+    line that mentions the path."""
+    from fnmatch import fnmatch
+    files = review_plan.changed_files(review_plan.Path(root).resolve(), state.get("target") or "")
+    entries = [c["path"] for c in state["coverage"]]
+
+    def named(name):
+        return any(name == e or fnmatch(name, e) or name.startswith(e.rstrip("/") + "/") or name in e
+                   for e in entries)
+    return [name for name in files if not GENERATED.search(name) and not named(name)]
+
+
+def cmd_drop(args):
+    """Take a recorded finding off: a repeat of another one, or one a later check killed. It
+    leaves the comments and stays on the notes page with the reason."""
+    state = load_state(args.dir)
+    why = (args.why or "").strip()
+    if not why or looks_like_placeholder(why):
+        raise Refused("--why: чем находка снята — повтор какой, что её опровергло.")
+    hits = [f for f in state["findings"] if f["location"] == args.location
+            and (args.claim or "") in f["claim"]]
+    if len(hits) != 1:
+        raise Refused("по %s найдено находок: %d — %s" % (
+            args.location, len(hits),
+            "уточни --claim \"<часть утверждения>\"" if hits else "проверь --location по REVIEW-NOTES.md"))
+    state["findings"].remove(hits[0])
+    state.setdefault("dropped", []).append({"finding": hits[0], "why": why})
+    save_state(args.dir, state)
+    write_notes(args.dir, state)
+    print("снято: %s %s" % (hits[0]["location"], hits[0]["claim"]))
     return 0
 
 
@@ -997,6 +1080,12 @@ def build_parser():
     q.add_argument("--source", required=True, help="ticket, MR, file:line or link it rests on")
     q.set_defaults(func=cmd_fyi)
 
+    q = sub.add_parser("drop", help="take a recorded finding off: a repeat, or killed by a later check")
+    q.add_argument("--location", required=True)
+    q.add_argument("--claim", help="part of its claim, when the line holds more than one finding")
+    q.add_argument("--why", required=True)
+    q.set_defaults(func=cmd_drop)
+
     q = sub.add_parser("note", help="free-form line for the notes page")
     q.add_argument("text")
     q.set_defaults(func=cmd_note)
@@ -1004,6 +1093,8 @@ def build_parser():
     q = sub.add_parser("render", help="print the comments, ready to post")
     q.add_argument("--json", action="store_true",
                    help="structured output; gitlab_comment.py post-batch --input takes it as is")
+    q.add_argument("--part", metavar="WHICH",
+                   help="one part of a review that goes in parts: the rest of the files is not asked for yet")
     q.add_argument("--no-inventory", metavar="WHY",
                    help="render without a Phase 0.4 inventory; the reason goes into the Phase 4 block")
     q.add_argument("--no-ticket", metavar="WHY",

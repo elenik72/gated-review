@@ -56,6 +56,12 @@ class LayoutTest(unittest.TestCase):
         self.assertIn("name: %s" % SKILL.name, head)
         self.assertIn("ALWAYS invoke", head)
 
+    def test_the_skill_survives_a_context_compaction_whole(self):
+        # Claude Code re-attaches an invoked skill cut to its first 5,000 tokens after a compaction;
+        # what a review needs only at one step lives in reference/, read from disk at that step.
+        size = len((SKILL / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertLessEqual(size, 19_000, "SKILL.md is %d characters: move a section to reference/" % size)
+
     def test_links_and_anchors_resolve(self):
         broken = []
         for md in SKILL.rglob("*.md"):

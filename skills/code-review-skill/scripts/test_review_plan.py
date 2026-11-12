@@ -92,6 +92,39 @@ class FixtureRepo(unittest.TestCase):
             review_plan.parse_stacks("ruby")
 
 
+class LargeMrTest(unittest.TestCase):
+    """Past LARGE changed files the plan sends the review commit by commit."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+        sh(self.root, "git", "init", "-q", "-b", "main")
+        sh(self.root, "git", "config", "user.email", "t@example.com")
+        sh(self.root, "git", "config", "user.name", "T")
+        self.commit("base", ["README.md"])
+        sh(self.root, "git", "checkout", "-q", "-b", "feature")
+
+    def commit(self, subject, names):
+        for name in names:
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(subject + "\n")
+        sh(self.root, "git", "add", ".")
+        sh(self.root, "git", "commit", "-q", "-m", subject)
+
+    def test_a_small_mr_gets_no_commit_list(self):
+        self.commit("one", ["a.py"])
+        self.assertEqual(review_plan.by_commit(self.root, "main"), [])
+
+    def test_a_large_mr_lists_its_commits_with_their_files(self):
+        self.commit("model", ["model/%d.py" % n for n in range(20)])
+        self.commit("api", ["api/%d.py" % n for n in range(15)])
+        text = "\n".join(review_plan.by_commit(self.root, "main"))
+        self.assertIn("MR крупный: 35 файлов", text)
+        self.assertRegex(text, r"\b20 файлов  model")
+        self.assertRegex(text, r"\b15 файлов  api")
+        self.assertIn("render --part", text)
+
+
 if __name__ == "__main__":
     os.environ.pop("GIT_DIR", None)
     unittest.main()

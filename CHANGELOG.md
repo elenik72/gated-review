@@ -1,5 +1,50 @@
 # Changelog
 
+## 2.0.0 — 2026-11-12
+
+A major version: a script or a bot that drives the gate has to change with it.
+
+- **Breaking.** `render` refuses while a changed file is in no inventory entry; `render --json`
+  no longer carries `resolve`; notes for the author are posted as one comment and reported as
+  `note ok <location> comment=<id>`, not as threads; `add` and `fyi` refuse text GitLab would
+  act on. Each is described below.
+- Nothing GitLab would act on is posted. A comment goes out under the reviewer's own token, so a
+  line that starts with a slash command (`/approve`, `/merge`) would run as that person and an
+  `@name` outside code would notify them (`@all`: the whole project). `finding.py add` and `fyi`
+  refuse such text, and `gitlab_comment.py` refuses it at the last door, for replies and
+  questions too.
+- `render` refuses while a changed file is in no inventory entry (a path, a glob, a directory, or
+  a line that names the file); generated files do not count. The inventory was kept by component
+  and read 99% «проверено» while reviews opened 40–78% of the files of a large MR.
+  `cover --skip` adds the entry it skips, `cover --done` clears the reason.
+- A large MR goes commit by commit: past 30 changed files the plan of `init` lists the commits
+  with their files, `render --part "<which>"` closes one part without asking for the rest, and
+  the last `render` asks for all of it.
+- `finding.py drop --location … --why …` takes a recorded finding off: a repeat, or one a later
+  check killed. It leaves the comments and stays on the notes page under «Сняты».
+- Two rules in SKILL.md. What you could not read proves nothing: no finding rests on a page that
+  did not open or a section cut off. When sources disagree, the weightiest decides: the
+  specification a ticket points to outweighs the ticket's own criteria, the ticket outweighs a
+  draft, a code comment or the MR description; code that follows the weightiest source is a note
+  for the author, code that departs from it is a finding. Both came from one review that judged
+  code by a specification cut in half.
+- SKILL.md is 19,000 characters instead of 38,000: Claude Code keeps the first 5,000 tokens of a
+  skill after a context compaction. The phases and the grading table moved to
+  `reference/review-process.md` (the plan names it for every mode), the index of guides to
+  `reference/guides.md`; `test_layout.py` keeps the size.
+- Notes for the author are no longer threads. `post-batch` puts the notes of a review into one
+  ordinary MR comment, each under a link to its line at the reviewed commit, and prints
+  `note ok <location> comment=<id>` for each; `post` does the same for a single note. A thread
+  failed either way: closed at posting, it was folded away before the author read it; open, it
+  held the merge wherever the project requires every thread resolved, and nobody but the
+  reviewer closed it (two approved merge requests waited eleven days on one note each). The
+  script deletes the comment and exits non-zero if GitLab made it a thread. `threads` lists it
+  as `comment`. `render --json` no longer carries `resolve`; `resolve --reopen` opens a thread
+  again.
+- `post` and `post-batch` anchor a comment on a line the change kept (context next to an edit) by
+  its old number too, looked up in the MR's diff. GitLab refused such a comment with
+  `line_code can't be blank`, and the batch stopped there.
+
 ## 1.3.0 — 2026-11-02
 
 - Comment types. The header is `**[ai-review-bot]** · <тип> · <вес> · <вердикт>`: the type follows from
