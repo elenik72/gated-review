@@ -314,9 +314,8 @@ class TypesAndNotesTest(unittest.TestCase):
                     dict(text="Почему здесь не общий хук?"),
                     dict(text="Ломается при пустом списке, белый экран")):
             self.assertEqual(self.fyi(**bad), 2, bad)
-        for _ in range(finding.FYI_LIMIT):
+        for _ in range(5):  # as many as the review has to say
             self.assertEqual(self.fyi(), 0)
-        self.assertEqual(self.fyi(), 2)
 
     def test_note_refuses_a_question_to_the_author(self):
         self.assertEqual(self.cli("note", "Вопрос автору: пустая строка в eventVariables подставляется"), 2)
@@ -326,7 +325,7 @@ class TypesAndNotesTest(unittest.TestCase):
     def test_notes_page_lists_notes_for_the_author(self):
         self.fyi()
         page = open(os.path.join(self.root, finding.NOTES_FILE), encoding="utf-8").read()
-        self.assertIn("## Заметки для автора (1 из %d)" % finding.FYI_LIMIT, page)
+        self.assertIn("## Заметки для автора (1)", page)
 
 
 class HideFromGitTest(unittest.TestCase):
@@ -586,24 +585,24 @@ class ModesAndRequirementsTest(unittest.TestCase):
         self.assertEqual(finding.compliance([met, unv]), "код соответствует, нужна проверка человеком")
         self.assertIn("без статуса", finding.compliance([met, {"status": None}]))
 
-    def test_nit_budget_follows_the_mode(self):
+    def test_every_minor_finding_is_rendered_in_any_mode(self):
         self.cli("init", "--mode", "business")
         self.cli("cover", "--add", "src/**")
-        self.cli("render", "--no-ticket", "проверка лимита nit")
+        self.cli("render", "--no-ticket", "проверка без лимита")
         self.add()
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             finding.main(["--dir", self.root, "render", "--json"])
-        self.assertEqual(json.loads(out.getvalue()), [])                         # business: no nits in the MR
+        self.assertEqual(len(json.loads(out.getvalue())), 1)
 
-        self.cli("init", "--force")                                              # full: at most five
+        self.cli("init", "--force")
         self.cli("cover", "--add", "src/**")
         for line in range(1, 8):
             self.add(line=line)
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             finding.main(["--dir", self.root, "render", "--json"])
-        self.assertEqual(len(json.loads(out.getvalue())), 5)
+        self.assertEqual(len(json.loads(out.getvalue())), 7)
 
     def test_init_keeps_the_plan_for_after_a_compaction(self):
         self.assertEqual(self.cli("init", "--mode", "design", "--stack", "python-fastapi")[0], 0)

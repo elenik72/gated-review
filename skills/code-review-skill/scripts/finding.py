@@ -103,7 +103,7 @@ STATIC_FORMS = ("collision", "rule", "unimplemented")
 BOT = "**[ai-review-bot]**"
 QUESTION_HEAD = BOT + " · ❓ Вопрос"
 FYI_HEAD = BOT + " · 💬 Заметка"
-FYI_LIMIT, FYI_WIDTH = 3, 240
+FYI_WIDTH = 240
 QUESTION_LIKE = re.compile(
     r"^\s*вопрос(\s+к)?\s+автор|(уточнить|спросить|подтвердить)\s+(у\s+)?автор|подтвердить в треде",
     re.IGNORECASE)
@@ -113,7 +113,7 @@ LIMITS = {"claim": 160, "breaks_when": 240, "evidence": 160, "assumption": 200}
 FIX_STEPS, FIX_WIDTH = 3, 160
 OUTPUT_LINES, OUTPUT_WIDTH = 10, 120
 ELSEWHERE = ("Контекст — что уже сделано, что делать не нужно, планы на другие MR и задачи — не в комментарий,\n"
-             "а в заметку для автора (finding.py fyi, до %d на MR) или в сводку ревью (finding.py note)." % FYI_LIMIT)
+             "а в заметку для автора (finding.py fyi) или в сводку ревью (finding.py note).")
 RULE_RE = re.compile(r"^(?P<path>[^\s:]+):(?P<a>\d+)(?:-(?P<b>\d+))?$")
 REQ_STATUSES = {
     "met": ("✅", "выполнено"),
@@ -576,7 +576,7 @@ def render_notes(state):
         L.append("_пусто_")
 
     fyi = state.get("fyi", [])
-    L += ["", "## Заметки для автора (%d из %d)" % (len(fyi), FYI_LIMIT), ""]
+    L += ["", "## Заметки для автора (%d)" % len(fyi), ""]
     L += ["- `%s` — %s (источник: %s)" % (n["location"], n["text"], n["source"]) for n in fyi] or ["_пусто_"]
 
     L += ["", "## Предполагается", ""]
@@ -870,13 +870,10 @@ def cmd_fyi(args):
         raise Refused("если по заметке нужно действие — это замечание: finding.py add с формой и проверкой.")
     if unsafe(text + "\n" + source):
         raise Refused(unsafe(text + "\n" + source))
-    if len(fyi) >= FYI_LIMIT:
-        raise Refused("заметок для автора уже %d — оставь самые важные, остальное в сводку (finding.py note)."
-                      % FYI_LIMIT)
     fyi.append({"location": args.location, "text": text, "source": source})
     save_state(args.dir, state)
     write_notes(args.dir, state)
-    print("заметка для автора %d/%d: %s" % (len(fyi), FYI_LIMIT, args.location))
+    print("заметка для автора %d: %s" % (len(fyi), args.location))
     return 0
 
 
@@ -929,12 +926,6 @@ def cmd_render(args):
             "gitlab_comment.py сверяет head MR с HEAD ревью и откажет, пока они расходятся."
             % (head_then, head_now),
             file=sys.stderr)
-    nits = [f for f in state["findings"] if f["severity"] == "nit"]
-    dropped = nits[mode["max_nits"]:]
-    if dropped:
-        state = dict(state, findings=[f for f in state["findings"] if f not in dropped])
-        print("ещё %d nit не идут в MR (лимит режима — %d): они остаются в REVIEW-NOTES."
-              % (len(dropped), mode["max_nits"]), file=sys.stderr)
     print(render_all(state, as_json=args.json))
     return 0
 

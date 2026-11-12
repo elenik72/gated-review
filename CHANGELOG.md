@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.0 — 2026-11-12
+
+- No limit on minor findings. `render` used to keep the first five «не важно» findings of a
+  review in `full` and `design` mode and none in `business` and `security`, leaving the rest in
+  REVIEW-NOTES. Every finding that passed the gate is rendered now: the gate decides what is
+  true, the reviewer decides what to post. On a merge request reviewed commit by commit the
+  limit cut a real finding because the parts before had used it up.
+- No limit on notes for the author either: `fyi` took three per merge request and refused the
+  fourth. A note still needs a source and stays under 240 characters.
+
 ## 2.0.0 — 2026-11-12
 
 A major version: a script or a bot that drives the gate has to change with it.

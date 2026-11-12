@@ -268,8 +268,8 @@ ticket/MR references per comment.
 
 **Worth the author's knowing, nothing to fix** — merge order with a sibling MR, a ticket that
 contradicts the docs, debt outside this MR — is a note for the author:
-`finding.py fyi --location <path:line> --source <ticket | MR | path:line> --text "<one sentence>"`,
-at most 3 per MR. `post-batch` posts them with the findings as one ordinary MR comment with a
+`finding.py fyi --location <path:line> --source <ticket | MR | path:line> --text "<one sentence>"`.
+`post-batch` posts them with the findings as one ordinary MR comment with a
 link to each line, not as threads: an open thread holds the merge where the project requires
 every thread resolved, and one closed at posting is folded away before the author reads it. A
 question to the author is never a `note` (`note` refuses it): post it with `post --question`.

@@ -39,7 +39,7 @@ When review findings are posted to a pull/merge request:
   by `finding.py fyi --location <path:line> --source <ticket | MR | path:line> --text "…"`:
   worth knowing, nothing to fix (merge order with a sibling MR, a ticket that contradicts the
   docs, debt outside this MR). It needs a source, stays under 240 characters, carries no verdict
-  and no fix, at most 3 per MR. `post-batch` posts the notes with the findings, but not as
+  and no fix. `post-batch` posts the notes with the findings, but not as
   threads: all of them go into **one ordinary MR comment**, each under a link to its line. A
   thread fails either way — open, it holds the merge wherever the project requires every thread
   resolved, and nobody but the reviewer closes it; closed at posting, it is folded away before

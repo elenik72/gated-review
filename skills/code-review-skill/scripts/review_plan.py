@@ -29,14 +29,12 @@ MODES = {
         "refs": ["reference/review-process.md", "reference/architecture-review-guide.md", "reference/code-quality-universal.md",
                  "reference/security-review-guide.md", "reference/performance-review-guide.md"],
         "forms": "все формы; требования тикета — таблица в Phase 4",
-        "max_nits": 5,
         "needs_requirements": False,
     },
     "business": {
         "title": "бизнес-логика: реализовано ли то, что требует тикет, и правильно ли",
         "refs": ["reference/review-process.md", "reference/business-logic-review.md"],
         "forms": "unimplemented, breaks, invariant, unrequested",
-        "max_nits": 0,
         "needs_requirements": True,
     },
     "design": {
@@ -44,7 +42,6 @@ MODES = {
         "refs": ["reference/review-process.md", "reference/design-review.md", "reference/architecture-review-guide.md",
                  "reference/code-quality-universal.md"],
         "forms": "rule, drift, unread, invariant",
-        "max_nits": 5,
         "needs_requirements": False,
     },
     "security": {
@@ -52,7 +49,6 @@ MODES = {
         "refs": ["reference/review-process.md", "reference/security-review-guide.md", "reference/cross-cutting/sql-injection-prevention.md",
                  "reference/cross-cutting/xss-prevention.md"],
         "forms": "breaks, invariant",
-        "max_nits": 0,
         "needs_requirements": False,
     },
 }
@@ -339,8 +335,6 @@ def build(root, mode, stacks, target, write_lists=False):
     else:
         lines.append("Лестница: инструментов репо не нашёл — ступень 2 из справочника стека, как зонд")
     lines.append(f"Фокус форм: {m['forms']}")
-    lines.append(f"В MR не больше {m['max_nits']} nit; остальные — только в REVIEW-NOTES" if m["max_nits"]
-                 else "nit в MR не идут — только в REVIEW-NOTES")
     lines += by_commit(root, target)
     if m["needs_requirements"]:
         lines.append("Гейт: render откажет без требований тикета — finding.py req --add \"<цитата>\"")
